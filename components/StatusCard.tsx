@@ -210,6 +210,12 @@ export default function StatusCard({ domain, isAdmin = false }: StatusCardProps)
         {getStatusBadge()}
       </div>
       
+      {domain.category && (
+        <div className="mt-4">
+          {getCategoryBadge()}
+        </div>
+      )}
+      
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
         <div className="flex items-center gap-2">
           <Clock className="text-brand h-4 w-4" />

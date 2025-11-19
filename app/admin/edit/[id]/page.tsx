@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { createClient } from "@/utils/supabase/client";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ChevronLeft, Globe, Tag, LinkIcon, Activity, ShieldCheck, Clock, CheckCircle, AlertTriangle, Server, ListFilter } from "lucide-react";
+import { ChevronLeft, Globe, Tag, LinkIcon, Activity, ShieldCheck, Clock, CheckCircle, AlertTriangle, Server, ListFilter, Plus, X } from "lucide-react";
 import LoadingSpinner from "@/components/LoadingSpinner";
 
 interface EditDomainProps {
@@ -29,8 +29,35 @@ export default function EditDomain({ params }: EditDomainProps) {
   const [success, setSuccess] = useState("");
   const [checkLoading, setCheckLoading] = useState<Record<string, boolean>>({});
   const [checkResults, setCheckResults] = useState<Record<string, { success: boolean; message: string } | null>>({});
+  
+  // Default categories
+  const defaultCategories = [
+    "Live Website",
+    "Live Website Temporary Suspended",
+    "Migration Done",
+    "Migration Pending",
+    "Draft Website",
+    "Draft Suspended Website"
+  ];
+  
+  const [categories, setCategories] = useState<string[]>(defaultCategories);
+  const [newCategory, setNewCategory] = useState("");
+  const [categoryLoading, setCategoryLoading] = useState(false);
 
   useEffect(() => {
+    // Load categories from localStorage
+    const savedCategories = localStorage.getItem('domain_categories');
+    if (savedCategories) {
+      try {
+        const parsed = JSON.parse(savedCategories);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setCategories(parsed);
+        }
+      } catch (e) {
+        console.error("Error parsing saved categories:", e);
+      }
+    }
+    
     const fetchDomain = async () => {
       setLoading(true);
       try {
@@ -71,6 +98,51 @@ export default function EditDomain({ params }: EditDomainProps) {
   const handleSelectChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const { name, value } = e.target;
     setFormData((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const addCategory = () => {
+    if (!newCategory.trim()) return;
+    
+    const trimmedCategory = newCategory.trim();
+    if (categories.includes(trimmedCategory)) {
+      setError("Category already exists");
+      return;
+    }
+    
+    setCategories([...categories, trimmedCategory]);
+    setNewCategory("");
+    setError("");
+  };
+
+  const removeCategory = (categoryToRemove: string) => {
+    // Don't allow removing if it's in the default list
+    if (defaultCategories.includes(categoryToRemove)) {
+      setError("Cannot remove default categories");
+      return;
+    }
+    
+    const updatedCategories = categories.filter(cat => cat !== categoryToRemove);
+    setCategories(updatedCategories);
+    setError("");
+    
+    // If the removed category was selected, reset to first category
+    if (formData.category === categoryToRemove) {
+      setFormData(prev => ({ ...prev, category: updatedCategories[0] || "Live Website" }));
+    }
+  };
+
+  const saveCategories = async () => {
+    setCategoryLoading(true);
+    try {
+      // Save to localStorage
+      localStorage.setItem('domain_categories', JSON.stringify(categories));
+      setSuccess("Categories saved successfully!");
+      setTimeout(() => setSuccess(""), 3000);
+    } catch (error: any) {
+      setError("Error saving categories: " + error.message);
+    } finally {
+      setCategoryLoading(false);
+    }
   };
 
   const updateDomain = async (e: React.FormEvent) => {
@@ -353,14 +425,90 @@ export default function EditDomain({ params }: EditDomainProps) {
                     onChange={handleSelectChange}
                     className="w-full pl-10 py-2 px-3 border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand transition-colors bg-background"
                   >
-                    <option value="Live Website">Live Website</option>
-                    <option value="Live Website Temporary Suspended">Live Website Temporary Suspended</option>
-                    <option value="Migration Done">Migration Done</option>
-                    <option value="Migration Pending">Migration Pending</option>
-                    <option value="Draft Website">Draft Website</option>
-                    <option value="Draft Suspended Website">Draft Suspended Website</option>
+                    {categories.map((cat) => (
+                      <option key={cat} value={cat}>
+                        {cat}
+                      </option>
+                    ))}
                   </select>
                 </div>
+              </div>
+
+              {/* Category Management Section */}
+              <div className="border-t pt-4 mt-4">
+                <label className="block text-sm font-medium text-foreground mb-2">
+                  Manage Categories
+                </label>
+                
+                {/* Add New Category */}
+                <div className="flex gap-2 mb-3">
+                  <input
+                    type="text"
+                    value={newCategory}
+                    onChange={(e) => setNewCategory(e.target.value)}
+                    onKeyPress={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        addCategory();
+                      }
+                    }}
+                    placeholder="Enter new category name"
+                    className="flex-1 py-2 px-3 border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand transition-colors bg-background text-sm"
+                  />
+                  <button
+                    type="button"
+                    onClick={addCategory}
+                    className="btn-secondary flex items-center gap-2 px-4"
+                  >
+                    <Plus size={16} />
+                    Add
+                  </button>
+                </div>
+
+                {/* Category List */}
+                <div className="mb-3">
+                  <div className="text-xs text-muted-foreground mb-2">Available Categories:</div>
+                  <div className="flex flex-wrap gap-2">
+                    {categories.map((cat) => (
+                      <span
+                        key={cat}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300"
+                      >
+                        {cat}
+                        {!defaultCategories.includes(cat) && (
+                          <button
+                            type="button"
+                            onClick={() => removeCategory(cat)}
+                            className="hover:text-red-600 transition-colors"
+                            title="Remove category"
+                          >
+                            <X size={12} />
+                          </button>
+                        )}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Save Categories Button */}
+                <button
+                  type="button"
+                  onClick={saveCategories}
+                  disabled={categoryLoading}
+                  className="btn-secondary w-full flex items-center justify-center gap-2"
+                >
+                  {categoryLoading ? (
+                    <>
+                      <LoadingSpinner size="sm" />
+                      <span>Saving...</span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle size={16} />
+                      <span>Save Category List</span>
+                    </>
+                  )}
+                </button>
               </div>
               
               <div className="flex justify-end">

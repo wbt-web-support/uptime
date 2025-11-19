@@ -25,6 +25,7 @@ export default function AdminPanel() {
   const [sortBy, setSortBy] = useState<"newest" | "oldest" | "domain" | "status">("domain");
   const [selectedDomains, setSelectedDomains] = useState<string[]>([]);
   const [selectAll, setSelectAll] = useState(false);
+  const [selectedCategory, setSelectedCategory] = useState<string>("Live Website");
   const [checkResults, setCheckResults] = useState<{
     successes: number;
     failures: number;
@@ -414,6 +415,29 @@ export default function AdminPanel() {
     }
   };
 
+  const updateSelectedDomainsCategory = async () => {
+    if (selectedDomains.length === 0) return;
+    
+    setLoading(true);
+    try {
+      const { error } = await supabase
+        .from("domains")
+        .update({ category: selectedCategory })
+        .in("id", selectedDomains);
+
+      if (error) throw error;
+      
+      setSuccess(`Category updated to "${selectedCategory}" for ${selectedDomains.length} ${selectedDomains.length === 1 ? 'domain' : 'domains'}!`);
+      setTimeout(() => setSuccess(""), 3000);
+      fetchDomains(); // Refresh data
+    } catch (error: any) {
+      setError(error.message);
+      setLoading(false);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="container mx-auto py-8 px-4">
       <DashboardHeader
@@ -477,23 +501,50 @@ export default function AdminPanel() {
           <div className="text-sm text-muted-foreground">
             <span className="font-medium">{selectedDomains.length}</span> {selectedDomains.length === 1 ? 'domain' : 'domains'} selected
           </div>
-          <div className="flex items-center gap-2">
-            <button 
-              onClick={checkSelectedDomains}
-              className="btn btn-secondary flex items-center gap-2"
-              disabled={loading}
-            >
-              <RefreshCw size={16} />
-              Check Selected
-            </button>
-            <button 
-              onClick={deleteSelectedDomains}
-              className="btn btn-destructive flex items-center gap-2"
-              disabled={loading}
-            >
-              <Trash2 size={16} />
-              Delete Selected
-            </button>
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-2">
+              <Select 
+                value={selectedCategory} 
+                onValueChange={setSelectedCategory}
+              >
+                <SelectTrigger className="w-[220px]">
+                  <SelectValue placeholder="Select category" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Live Website">Live Website</SelectItem>
+                  <SelectItem value="Live Website Temporary Suspended">Live Website Temporary Suspended</SelectItem>
+                  <SelectItem value="Migration Done">Migration Done</SelectItem>
+                  <SelectItem value="Migration Pending">Migration Pending</SelectItem>
+                  <SelectItem value="Draft Website">Draft Website</SelectItem>
+                  <SelectItem value="Draft Suspended Website">Draft Suspended Website</SelectItem>
+                </SelectContent>
+              </Select>
+              <button 
+                onClick={updateSelectedDomainsCategory}
+                className="btn btn-secondary flex items-center gap-2"
+                disabled={loading}
+              >
+                Update Category
+              </button>
+            </div>
+            <div className="flex items-center gap-2">
+              <button 
+                onClick={checkSelectedDomains}
+                className="btn btn-secondary flex items-center gap-2"
+                disabled={loading}
+              >
+                <RefreshCw size={16} />
+                Check Selected
+              </button>
+              <button 
+                onClick={deleteSelectedDomains}
+                className="btn btn-destructive flex items-center gap-2"
+                disabled={loading}
+              >
+                <Trash2 size={16} />
+                Delete Selected
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -538,7 +589,7 @@ export default function AdminPanel() {
                 <th className="p-3 font-medium text-muted-foreground">Status</th>
                 <th className="p-3 font-medium text-muted-foreground">SSL</th>
                 <th className="p-3 font-medium text-muted-foreground">Domain Expiry</th>
-                {/* <th className="p-3 font-medium text-muted-foreground">Category</th> */}
+                <th className="p-3 font-medium text-muted-foreground">Category</th>
                 <th className="p-3 font-medium text-muted-foreground">Server</th>
                 <th className="p-3 font-medium text-muted-foreground">Actions</th>
               </tr>
@@ -610,9 +661,15 @@ export default function AdminPanel() {
                       <span className="text-green-600">{domain.domain_expiry.days_remaining} days</span>
                     )}
                   </td>
-                  {/* <td className="p-3">
-                    {domain.category}
-                  </td> */}
+                  <td className="p-3">
+                    {domain.category ? (
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium  text-blue-800  dark:text-blue-300">
+                        {domain.category}
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground text-xs">Not set</span>
+                    )}
+                  </td>
                   <td className="p-3">
                     {!domain.ip_records ? (
                       <span className="text-muted-foreground">Unknown</span>

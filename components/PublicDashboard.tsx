@@ -317,6 +317,7 @@ export default function PublicDashboard() {
                   <th className="px-4 py-3 text-left font-medium">Last Check</th>
                   <th className="px-4 py-3 text-left font-medium">SSL Expires</th>
                   <th className="px-4 py-3 text-left font-medium">Domain Expires</th>
+                  <th className="px-4 py-3 text-left font-medium">Category</th>
                   <th className="px-4 py-3 text-left font-medium">IP / Server</th>
                   <th className="px-4 py-3 text-right font-medium">Actions</th>
                 </tr>
@@ -417,6 +418,15 @@ export default function PublicDashboard() {
                           </span>
                         )}
                       </div>
+                    </td>
+                    <td className="px-4 py-4">
+                      {domain.category ? (
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium  text-blue-800  dark:text-blue-300">
+                          {domain.category}
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground text-xs">Not set</span>
+                      )}
                     </td>
                     <td className="px-4 py-4">
                       <div className="flex items-center gap-2">
