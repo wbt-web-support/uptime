@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Menu, X, ChevronsUp, Shield, Home, User, Bell } from "lucide-react"; 
@@ -13,17 +13,38 @@ export default function Navigation() {
   const [user, setUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const pathname = usePathname();
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
 
   useEffect(() => {
     async function getUser() {
       setLoading(true);
-      const { data } = await supabase.auth.getUser();
-      setUser(data.user);
+      const { data: { session } } = await supabase.auth.getSession();
+      setUser(session?.user ?? null);
       setLoading(false);
     }
     getUser();
-  }, []);
+
+    // Listen for auth state changes
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+      setLoading(false);
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [supabase]);
+
+  // Re-check user when pathname changes (e.g., after login redirect)
+  useEffect(() => {
+    async function checkUser() {
+      const { data: { session } } = await supabase.auth.getSession();
+      setUser(session?.user ?? null);
+    }
+    checkUser();
+  }, [pathname, supabase]);
 
   useEffect(() => {
     // Close mobile menu when route changes
