@@ -16,7 +16,7 @@ export default function StatsOverview({ domains }: StatsOverviewProps) {
   
   // Uptime stats
   const upDomains = domains.filter(d => d.uptime?.status === true).length;
-  const downDomains = domains.filter(d => d.uptime?.status === false && d.category !== "Migration Done").length;
+  const downDomains = domains.filter(d => d.uptime?.status === false).length;
   const unknownStatusDomains = domains.length - upDomains - downDomains;
   
   // SSL stats

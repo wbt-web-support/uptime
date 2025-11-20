@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { createClient } from "@/utils/supabase/client";
 import { signOutAction } from "@/app/actions";
 import StatusCard from "@/components/StatusCard";
@@ -9,7 +9,7 @@ import DashboardHeader from "@/components/DashboardHeader";
 import StatsOverview from "@/components/StatsOverview";
 import DomainActions from "@/components/DomainActions";
 import LoadingSpinner from "@/components/LoadingSpinner";
-import { AlertTriangle, Clock, CheckCircle, RefreshCw, Activity, Shield, Globe, Server, ExternalLink, Trash2, ArrowUp, ArrowDown, ChevronsUpDown } from "lucide-react";
+import { AlertTriangle, Clock, CheckCircle, RefreshCw, Activity, Shield, Globe, Server, ExternalLink, Trash2, ArrowUp, ArrowDown, ChevronsUpDown, ChevronLeft, ChevronRight } from "lucide-react";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 
 export default function AdminPanel() {
@@ -32,82 +32,28 @@ export default function AdminPanel() {
     total: number;
   }>({ successes: 0, failures: 0, total: 0 });
   const [checkingDomain, setCheckingDomain] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(25);
   const supabase = createClient();
 
   const fetchDomains = async () => {
     setLoading(true);
     try {
-      // Get all domains
-      const { data: domainsData, error: domainsError } = await supabase
-        .from("domains")
-        .select("*");
-
-      if (domainsError) throw domainsError;
-
-      if (!domainsData || domainsData.length === 0) {
-        setDomains([]);
-        setLoading(false);
-        return;
-      }
-
-      const domainIds = domainsData.map(domain => domain.id);
-      
-      const { data: uptimeData, error: uptimeError } = await supabase
-        .from('uptime_logs')
-        .select('*')
-        .in('domain_id', domainIds)
-        .order('checked_at', { ascending: false });
-      
-      if (uptimeError) throw uptimeError;
-
-      // Get latest SSL info for each domain
-      const { data: sslData, error: sslError } = await supabase
-        .from('ssl_info')
-        .select('*')
-        .in('domain_id', domainIds)
-        .order('checked_at', { ascending: false });
-      
-      if (sslError) throw sslError;
-
-      // Get latest domain expiry info for each domain
-      const { data: expiryData, error: expiryError } = await supabase
-        .from('domain_expiry')
-        .select('*')
-        .in('domain_id', domainIds)
-        .order('checked_at', { ascending: false });
-      
-      if (expiryError) throw expiryError;
-
-      // Get latest IP records for each domain
-      const { data: ipData, error: ipError } = await supabase
-        .from('ip_records')
-        .select('*')
-        .in('domain_id', domainIds)
-        .order('checked_at', { ascending: false });
-      
-      if (ipError) throw ipError;
-
-      // Combine all data
-      const domainsWithStatus = domainsData.map(domain => {
-        // Get the latest uptime record for this domain
-        const latestUptime = uptimeData?.find(log => log.domain_id === domain.id);
-        // Get the latest SSL info for this domain
-        const latestSSL = sslData?.find(ssl => ssl.domain_id === domain.id);
-        // Get the latest domain expiry info for this domain
-        const latestExpiry = expiryData?.find(exp => exp.domain_id === domain.id);
-        // Get the latest IP records for this domain
-        const latestIp = ipData?.find(ip => ip.domain_id === domain.id);
-
-        return {
-          ...domain,
-          uptime: latestUptime,
-          ssl: latestSSL,
-          domain_expiry: latestExpiry,
-          ip_records: latestIp
-        };
+      // Use optimized server-side API route
+      const response = await fetch('/api/domains', {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
       });
 
-      setDomains(domainsWithStatus);
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to fetch domains');
+      }
+
+      const { domains: domainsWithStatus } = await response.json();
+      setDomains(domainsWithStatus || []);
     } catch (err: any) {
       console.error("Error fetching data:", err);
       setError(err.message);
@@ -224,31 +170,60 @@ export default function AdminPanel() {
     return ipMappings[ip] || null;
   };
 
+  // Function to get category color classes
+  const getCategoryColor = (category: string) => {
+    const colorMap: Record<string, string> = {
+      "Live Website": "bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400",
+      "Live Website Temporary Suspended": "bg-purple-100 text-purple-800 dark:bg-purple-900/20 dark:text-purple-400",
+      "Migration Done": "bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400",
+      "Migration Pending": "bg-orange-100 text-orange-800 dark:bg-orange-900/20 dark:text-orange-400",
+      "Draft Website": "bg-slate-100 text-slate-800 dark:bg-slate-900/20 dark:text-slate-400",
+      "Draft Suspended Website": "bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400"
+    };
+
+    return colorMap[category] || "bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400";
+  };
+
+  // Function to get short display name for category
+  const getCategoryDisplayName = (category: string) => {
+    const shortNames: Record<string, string> = {
+      "Live Website": "Live",
+      "Live Website Temporary Suspended": "Temp Suspended",
+      "Migration Done": "Migration Done",
+      "Migration Pending": "Migration Pending",
+      "Draft Website": "Draft",
+      "Draft Suspended Website": "Draft Suspended"
+    };
+
+    return shortNames[category] || category;
+  };
+
   // Get all unique categories from domains
   const categories = ["all", ...Array.from(new Set(domains
     .filter(domain => domain.category)
     .map(domain => domain.category)
   ))];
 
-  // Filter domains based on search query and status filter
-  const filteredDomains = domains.filter(domain => {
-    const matchesSearch = 
-      domain.domain_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (domain.display_name && domain.display_name.toLowerCase().includes(searchQuery.toLowerCase()));
-    
-    const matchesStatus = 
-      statusFilter === 'all' || 
-      (statusFilter === 'up' && domain.uptime?.status === true) ||
-      (statusFilter === 'down' && domain.uptime?.status === false) ||
-      (statusFilter === 'ssl-expiring' && (domain.ssl?.days_remaining ?? 999) <= 30) ||
-      (statusFilter === 'domain-expiring' && (domain.domain_expiry?.days_remaining ?? 999) <= 30);
-    
-    const matchesCategory = 
-      categoryFilter === 'all' || 
-      domain.category === categoryFilter;
-    
-    return matchesSearch && matchesStatus && matchesCategory;
-  }).sort((a, b) => {
+  // Filter and sort domains with memoization for performance
+  const filteredDomains = useMemo(() => {
+    return domains.filter(domain => {
+      const matchesSearch = 
+        domain.domain_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (domain.display_name && domain.display_name.toLowerCase().includes(searchQuery.toLowerCase()));
+      
+      const matchesStatus = 
+        statusFilter === 'all' || 
+        (statusFilter === 'up' && domain.uptime?.status === true) ||
+        (statusFilter === 'down' && domain.uptime?.status === false) ||
+        (statusFilter === 'ssl-expiring' && (domain.ssl?.days_remaining ?? 999) <= 30) ||
+        (statusFilter === 'domain-expiring' && (domain.domain_expiry?.days_remaining ?? 999) <= 30);
+      
+      const matchesCategory = 
+        categoryFilter === 'all' || 
+        domain.category === categoryFilter;
+      
+      return matchesSearch && matchesStatus && matchesCategory;
+    }).sort((a, b) => {
     switch(sortBy) {
       case "newest":
         return new Date(b.uptime?.checked_at || 0).getTime() - new Date(a.uptime?.checked_at || 0).getTime();
@@ -288,7 +263,21 @@ export default function AdminPanel() {
       default:
         return 0;
     }
-  });
+    });
+  }, [domains, searchQuery, statusFilter, categoryFilter, sortBy]);
+
+  // Pagination calculations
+  const totalPages = Math.ceil(filteredDomains.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const paginatedDomains = useMemo(() => {
+    return filteredDomains.slice(startIndex, endIndex);
+  }, [filteredDomains, startIndex, endIndex]);
+
+  // Reset to page 1 when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, statusFilter, categoryFilter, sortBy]);
 
   const checkDomain = async (id: string, url: string, domain_name: string) => {
     setCheckingDomain(id);
@@ -646,7 +635,7 @@ export default function AdminPanel() {
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {filteredDomains.map((domain) => (
+              {paginatedDomains.map((domain) => (
                 <tr key={domain.id} className="hover:bg-muted/50">
                   <td className="p-3">
                     <div className="flex items-center gap-2">
@@ -714,8 +703,8 @@ export default function AdminPanel() {
                   </td>
                   <td className="p-3">
                     {domain.category ? (
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium  text-blue-800  dark:text-blue-300">
-                        {domain.category}
+                      <span className={`inline-flex items-center px-2.5 text-nowrap py-0.5 rounded-full text-xs font-medium ${getCategoryColor(domain.category)}`} title={domain.category}>
+                        {getCategoryDisplayName(domain.category)}
                       </span>
                     ) : (
                       <span className="text-muted-foreground text-xs">Not set</span>
@@ -765,6 +754,88 @@ export default function AdminPanel() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Pagination Controls */}
+      {filteredDomains.length > 0 && (
+        <div className="card mt-6 flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <span className="text-sm text-muted-foreground">
+              Showing {startIndex + 1} to {Math.min(endIndex, filteredDomains.length)} of {filteredDomains.length} domains
+            </span>
+            <div className="flex items-center gap-2">
+              <label htmlFor="itemsPerPage" className="text-sm text-muted-foreground">
+                Per page:
+              </label>
+              <Select 
+                value={itemsPerPage.toString()} 
+                onValueChange={(value) => {
+                  setItemsPerPage(Number(value));
+                  setCurrentPage(1);
+                }}
+              >
+                <SelectTrigger className="w-[80px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="10">10</SelectItem>
+                  <SelectItem value="25">25</SelectItem>
+                  <SelectItem value="50">50</SelectItem>
+                  <SelectItem value="100">100</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+              disabled={currentPage === 1}
+              className="btn btn-secondary flex items-center gap-2 px-3 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <ChevronLeft size={16} />
+              <span className="hidden sm:inline">Previous</span>
+            </button>
+            
+            <div className="flex items-center gap-1">
+              {Array.from({ length: Math.min(totalPages, 7) }, (_, i) => {
+                let pageNum;
+                if (totalPages <= 7) {
+                  pageNum = i + 1;
+                } else if (currentPage <= 4) {
+                  pageNum = i + 1;
+                } else if (currentPage >= totalPages - 3) {
+                  pageNum = totalPages - 6 + i;
+                } else {
+                  pageNum = currentPage - 3 + i;
+                }
+                
+                return (
+                  <button
+                    key={pageNum}
+                    onClick={() => setCurrentPage(pageNum)}
+                    className={`px-3 py-2 text-sm rounded-md transition-colors ${
+                      currentPage === pageNum
+                        ? 'bg-brand text-white'
+                        : 'bg-muted hover:bg-muted/80 text-foreground'
+                    }`}
+                  >
+                    {pageNum}
+                  </button>
+                );
+              })}
+            </div>
+            
+            <button
+              onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+              disabled={currentPage === totalPages}
+              className="btn btn-secondary flex items-center gap-2 px-3 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <span className="hidden sm:inline">Next</span>
+              <ChevronRight size={16} />
+            </button>
+          </div>
         </div>
       )}
 
