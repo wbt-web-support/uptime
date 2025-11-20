@@ -9,7 +9,7 @@ import DashboardHeader from "@/components/DashboardHeader";
 import StatsOverview from "@/components/StatsOverview";
 import DomainActions from "@/components/DomainActions";
 import LoadingSpinner from "@/components/LoadingSpinner";
-import { AlertTriangle, Clock, CheckCircle, RefreshCw, Activity, Shield, Globe, Server, ExternalLink, Trash2 } from "lucide-react";
+import { AlertTriangle, Clock, CheckCircle, RefreshCw, Activity, Shield, Globe, Server, ExternalLink, Trash2, ArrowUp, ArrowDown, ChevronsUpDown } from "lucide-react";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 
 export default function AdminPanel() {
@@ -22,7 +22,7 @@ export default function AdminPanel() {
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [checkInterval, setCheckInterval] = useState("daily");
   const [checkingAll, setCheckingAll] = useState(false);
-  const [sortBy, setSortBy] = useState<"newest" | "oldest" | "domain" | "status">("domain");
+  const [sortBy, setSortBy] = useState<"newest" | "oldest" | "domain" | "status" | "ssl-asc" | "ssl-desc" | "expiry-asc" | "expiry-desc">("domain");
   const [selectedDomains, setSelectedDomains] = useState<string[]>([]);
   const [selectAll, setSelectAll] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string>("Live Website");
@@ -31,6 +31,7 @@ export default function AdminPanel() {
     failures: number;
     total: number;
   }>({ successes: 0, failures: 0, total: 0 });
+  const [checkingDomain, setCheckingDomain] = useState<string | null>(null);
   const supabase = createClient();
 
   const fetchDomains = async () => {
@@ -264,12 +265,36 @@ export default function AdminPanel() {
         if (bStatus === true) return 1;
         if (aStatus === false) return -1;
         return 1;
+      case "ssl-asc":
+        // Sort SSL by days remaining (ascending - lowest first)
+        const aSslDays = a.ssl?.days_remaining ?? 999;
+        const bSslDays = b.ssl?.days_remaining ?? 999;
+        return aSslDays - bSslDays;
+      case "ssl-desc":
+        // Sort SSL by days remaining (descending - highest first)
+        const aSslDaysDesc = a.ssl?.days_remaining ?? 999;
+        const bSslDaysDesc = b.ssl?.days_remaining ?? 999;
+        return bSslDaysDesc - aSslDaysDesc;
+      case "expiry-asc":
+        // Sort Domain Expiry by days remaining (ascending - lowest first)
+        const aExpiryDays = a.domain_expiry?.days_remaining ?? 999;
+        const bExpiryDays = b.domain_expiry?.days_remaining ?? 999;
+        return aExpiryDays - bExpiryDays;
+      case "expiry-desc":
+        // Sort Domain Expiry by days remaining (descending - highest first)
+        const aExpiryDaysDesc = a.domain_expiry?.days_remaining ?? 999;
+        const bExpiryDaysDesc = b.domain_expiry?.days_remaining ?? 999;
+        return bExpiryDaysDesc - aExpiryDaysDesc;
       default:
         return 0;
     }
   });
 
   const checkDomain = async (id: string, url: string, domain_name: string) => {
+    setCheckingDomain(id);
+    setSuccess("");
+    setError("");
+    
     try {
       setSuccess(`Checking domain: ${domain_name}...`);
       
@@ -305,6 +330,8 @@ export default function AdminPanel() {
       fetchDomains(); // Refresh data
     } catch (err: any) {
       setError(`Error checking domain ${domain_name}: ${err.message}`);
+    } finally {
+      setCheckingDomain(null);
     }
   };
 
@@ -587,8 +614,32 @@ export default function AdminPanel() {
                   </div>
                 </th>
                 <th className="p-3 font-medium text-muted-foreground">Status</th>
-                <th className="p-3 font-medium text-muted-foreground">SSL</th>
-                <th className="p-3 font-medium text-muted-foreground">Domain Expiry</th>
+                <th className="p-3 font-medium text-muted-foreground">
+                  <button
+                    onClick={() => setSortBy(sortBy === "ssl-asc" ? "ssl-desc" : "ssl-asc")}
+                    className="flex items-center gap-1 hover:text-foreground transition-colors cursor-pointer"
+                  >
+                    SSL
+                    {sortBy === "ssl-asc" && <ArrowUp className="h-3 w-3" />}
+                    {sortBy === "ssl-desc" && <ArrowDown className="h-3 w-3" />}
+                    {sortBy !== "ssl-asc" && sortBy !== "ssl-desc" && (
+                      <ChevronsUpDown className="h-3 w-3 opacity-40" />
+                    )}
+                  </button>
+                </th>
+                <th className="p-3 font-medium text-muted-foreground">
+                  <button
+                    onClick={() => setSortBy(sortBy === "expiry-asc" ? "expiry-desc" : "expiry-asc")}
+                    className="flex items-center gap-1 hover:text-foreground transition-colors cursor-pointer"
+                  >
+                    Domain Expiry
+                    {sortBy === "expiry-asc" && <ArrowUp className="h-3 w-3" />}
+                    {sortBy === "expiry-desc" && <ArrowDown className="h-3 w-3" />}
+                    {sortBy !== "expiry-asc" && sortBy !== "expiry-desc" && (
+                      <ChevronsUpDown className="h-3 w-3 opacity-40" />
+                    )}
+                  </button>
+                </th>
                 <th className="p-3 font-medium text-muted-foreground">Category</th>
                 <th className="p-3 font-medium text-muted-foreground">Server</th>
                 <th className="p-3 font-medium text-muted-foreground">Actions</th>
@@ -688,7 +739,25 @@ export default function AdminPanel() {
                     )}
                   </td>
                   <td className="p-3">
-                    <div className="flex justify-end">
+                    <div className="flex justify-end items-center gap-2">
+                      <button
+                        onClick={() => checkDomain(domain.id, domain.uptime_url, domain.domain_name)}
+                        disabled={checkingDomain === domain.id}
+                        className="btn btn-secondary flex items-center gap-2 py-1.5 px-3 text-xs"
+                        title="Check all statuses for this domain"
+                      >
+                        {checkingDomain === domain.id ? (
+                          <>
+                            <RefreshCw size={14} className="animate-spin" />
+                            <span className="hidden sm:inline">Checking...</span>
+                          </>
+                        ) : (
+                          <>
+                            <RefreshCw size={14} />
+                            <span className="hidden sm:inline">Check Status</span>
+                          </>
+                        )}
+                      </button>
                       <DomainActions domain={domain} onDelete={deleteDomain} />
                     </div>
                   </td>

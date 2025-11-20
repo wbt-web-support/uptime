@@ -6,6 +6,7 @@ interface StatsOverviewProps {
     ssl?: { days_remaining: number };
     domain_expiry?: { days_remaining: number };
     ip_records?: { primary_ip: string };
+    category?: string;
   }>;
 }
 
@@ -15,7 +16,7 @@ export default function StatsOverview({ domains }: StatsOverviewProps) {
   
   // Uptime stats
   const upDomains = domains.filter(d => d.uptime?.status === true).length;
-  const downDomains = domains.filter(d => d.uptime?.status === false).length;
+  const downDomains = domains.filter(d => d.uptime?.status === false && d.category !== "Migration Done").length;
   const unknownStatusDomains = domains.length - upDomains - downDomains;
   
   // SSL stats
