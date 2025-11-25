@@ -607,7 +607,7 @@ export default function AdminPanel() {
         </div>
       ) : (
         <div className="card overflow-hidden">
-          <div className="overflow-x-auto max-h-[calc(100vh-400px)] overflow-y-auto">
+          <div className="overflow-x-auto max-h-[calc(100vh-100px)] overflow-y-auto">
             <table className="w-full">
               <thead className="text-left bg-muted sticky top-0 z-10">
                 <tr>
@@ -804,7 +804,7 @@ export default function AdminPanel() {
 
       {/* Pagination Controls */}
       {filteredDomains.length > 0 && (
-        <div className="card mt-6 flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="border p-2 rounded-lg mt-6 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-4">
             <span className="text-sm text-muted-foreground">
               Showing {startIndex + 1} to {Math.min(endIndex, filteredDomains.length)} of {filteredDomains.length} domains
@@ -884,7 +884,7 @@ export default function AdminPanel() {
         </div>
       )}
 
-      {/* Monitoring Settings */}
+      {/* Monitoring Settings 
       <div className="card mb-8 mt-6">
         <div className="card-header">
           <h2 className="card-title">Monitoring Settings</h2>
@@ -923,6 +923,7 @@ export default function AdminPanel() {
           </div>
         </div>
       </div>
+      */}
     </div>
   );
 } 
