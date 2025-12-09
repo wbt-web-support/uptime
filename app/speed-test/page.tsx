@@ -51,6 +51,17 @@ export default function SpeedTestPage() {
   const [analysisLog, setAnalysisLog] = useState<
     { domainId: string; name: string; status: "queued" | "running" | "done" | "error"; finishedAt?: number; message?: string }[]
   >([]);
+  const [addDomainData, setAddDomainData] = useState({
+    domain_name: "",
+    display_name: "",
+    uptime_url: "",
+    category: "",
+    tag: "",
+  });
+  const [useCustomCategory, setUseCustomCategory] = useState(false);
+  const [addingDomain, setAddingDomain] = useState(false);
+  const [addDomainError, setAddDomainError] = useState("");
+  const [showAddDomain, setShowAddDomain] = useState(false);
 
   const supabase = createClient();
   const router = useRouter();
@@ -186,24 +197,110 @@ export default function SpeedTestPage() {
     return { success, errors };
   };
 
+  const validateRequiredMetrics = async (domainId: string) => {
+    const requiredFields: Array<keyof Domain> = [];
+    try {
+      const { data, error } = await supabase
+        .from("pagespeed_results")
+        .select(
+          "strategy, performance_score, accessibility_score, best_practices_score, seo_score, first_contentful_paint, speed_index, time_to_interactive"
+        )
+        .eq("domain_id", domainId)
+        .order("tested_at", { ascending: false })
+        .limit(20);
+
+      if (error) {
+        console.error("Error validating metrics:", error);
+        return { hasBadData: false, message: "" };
+      }
+
+      const latestByStrategy: Record<string, any> = {};
+      (data || []).forEach((row) => {
+        if (!latestByStrategy[row.strategy]) {
+          latestByStrategy[row.strategy] = row;
+        }
+      });
+
+      const strategiesToCheck: Array<"mobile" | "desktop"> = ["mobile", "desktop"];
+      for (const strat of strategiesToCheck) {
+        const row = latestByStrategy[strat];
+        if (row && row.performance_score !== null && row.performance_score >= 0) {
+          const missing =
+            row.accessibility_score === null ||
+            row.best_practices_score === null ||
+            row.seo_score === null ||
+            row.first_contentful_paint === null ||
+            row.speed_index === null ||
+            row.time_to_interactive === null;
+          if (missing) {
+            return {
+              hasBadData: true,
+              message: `Missing required metrics for ${strat}`,
+            };
+          }
+        }
+      }
+
+      return { hasBadData: false, message: "" };
+    } catch (err: any) {
+      console.error("Validation exception:", err);
+      return { hasBadData: false, message: "" };
+    }
+  };
+
   const analyzeSelectedDomains = async () => {
     if (selectedDomains.size === 0 || analyzingBatch) return;
     setAnalyzingBatch(true);
     setAnalysisLog([]);
     const targets = domains.filter((d) => selectedDomains.has(d.id));
-    const concurrency = Math.min(3, targets.length || 1);
+    const concurrency = Math.min(5, targets.length || 1);
     let index = 0;
+
+    const delay = (ms: number) => new Promise((res) => setTimeout(res, ms));
 
     const runNext = async (): Promise<void> => {
       const currentIndex = index++;
       if (currentIndex >= targets.length) return;
       const domain = targets[currentIndex];
+      await delay(2000);
       setAnalysisLog((prev) => [
         ...prev,
         { domainId: domain.id, name: domain.display_name || domain.domain_name, status: "running" },
       ]);
       try {
-        const { success, errors } = await startBackgroundTestsForDomain(domain);
+        let attempt = 0;
+        let success = false;
+        let lastErrors: string[] = [];
+
+        while (attempt < 3 && !success) {
+          attempt += 1;
+          try {
+            const res = await startBackgroundTestsForDomain(domain);
+            success = res.success;
+            lastErrors = res.errors;
+            if (!success && attempt < 3) {
+              await delay(2000);
+            }
+          } catch (err: any) {
+            lastErrors = [err?.message || "Failed"];
+            if (attempt < 3) {
+              await delay(2000);
+            }
+          }
+
+          // If queueing succeeded, validate metrics that already exist; if missing required fields, treat as failure
+          if (success) {
+            const validation = await validateRequiredMetrics(domain.id);
+            if (validation.hasBadData) {
+              success = false;
+              lastErrors = [validation.message];
+              if (attempt < 3) {
+                await delay(2000);
+              }
+            }
+          }
+        }
+
         setAnalysisLog((prev) =>
           prev.map((item) =>
             item.domainId === domain.id
@@ -211,7 +308,9 @@ export default function SpeedTestPage() {
                   ...item,
                   status: success ? "done" : "error",
                   finishedAt: Date.now(),
-                  message: errors.join("; "),
+                  message: success
+                    ? undefined
+                    : `Failed after ${attempt} attempt${attempt > 1 ? "s" : ""}: ${lastErrors.join("; ")}`,
                 }
               : item
           )
@@ -229,6 +328,52 @@ export default function SpeedTestPage() {
     await Promise.all(Array.from({ length: concurrency }).map(() => runNext()));
     setAnalyzingBatch(false);
     fetchLatestResults(domains);
+  };
+
+  const handleAddDomain = async () => {
+    setAddDomainError("");
+    const { domain_name, display_name, uptime_url, category, tag } = addDomainData;
+
+    if (!domain_name.trim() || !uptime_url.trim()) {
+      setAddDomainError("Domain name and uptime URL are required.");
+      return;
+    }
+
+    let normalizedUptime = uptime_url.trim();
+    if (!normalizedUptime.startsWith("http://") && !normalizedUptime.startsWith("https://")) {
+      normalizedUptime = `https://${normalizedUptime}`;
+    }
+
+    setAddingDomain(true);
+    try {
+      const { error: insertError } = await supabase.from("domains").insert({
+        domain_name: domain_name.trim(),
+        display_name: display_name.trim() || null,
+        uptime_url: normalizedUptime,
+        category: category.trim() || null,
+        tag: tag.trim() || null,
+      });
+
+      if (insertError) throw insertError;
+
+      // Refresh list
+      await fetchDomains();
+
+      // Reset form
+      setAddDomainData({
+        domain_name: "",
+        display_name: "",
+        uptime_url: "",
+        category: "",
+        tag: "",
+      });
+      setUseCustomCategory(false);
+    } catch (err: any) {
+      console.error("Error adding domain:", err);
+      setAddDomainError(err.message || "Failed to add domain");
+    } finally {
+      setAddingDomain(false);
+    }
   };
 
   useEffect(() => {
@@ -517,18 +662,166 @@ export default function SpeedTestPage() {
   return (
     <div className="container mx-auto px-4 py-8">
       <div className="mb-8">
-        <div className="flex items-center gap-3 mb-2">
-          <Gauge className="h-8 w-8 text-brand" />
-          <h1 className="text-4xl font-bold">Speed Test</h1>
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-2">
+          <div className="flex items-center gap-3">
+            <Gauge className="h-8 w-8 text-brand" />
+            <h1 className="text-4xl font-bold">Speed Test</h1>
+          </div>
+          <Button
+            className="w-full sm:w-auto"
+            onClick={() => {
+              setShowAddDomain((prev) => !prev);
+              const el = document.getElementById("add-domain-form");
+              if (el && !showAddDomain) {
+                setTimeout(() => {
+                  el.scrollIntoView({ behavior: "smooth", block: "start" });
+                }, 50);
+              }
+            }}
+            aria-expanded={showAddDomain}
+          >
+            <Plus className="h-4 w-4 mr-2" />
+            {showAddDomain ? "Hide Add Domain" : "Add New Domain"}
+          </Button>
         </div>
         <p className="text-muted-foreground text-lg">
           Test the speed and performance of all monitored domains
         </p>
       </div>
 
+      {showAddDomain && (
+        <div id="add-domain-form" className="mb-8">
+          <Card>
+            <CardHeader>
+              <CardTitle>Add New Domain</CardTitle>
+              <CardDescription>Quickly add a domain to start testing.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-sm font-medium">Domain Name *</label>
+                  <Input
+                    value={addDomainData.domain_name}
+                    onChange={(e) => setAddDomainData((prev) => ({ ...prev, domain_name: e.target.value }))}
+                    placeholder="example.com"
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Display Name</label>
+                  <Input
+                    value={addDomainData.display_name}
+                    onChange={(e) => setAddDomainData((prev) => ({ ...prev, display_name: e.target.value }))}
+                    placeholder="Friendly name"
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Uptime URL *</label>
+                  <Input
+                    value={addDomainData.uptime_url}
+                    onChange={(e) => setAddDomainData((prev) => ({ ...prev, uptime_url: e.target.value }))}
+                    placeholder="https://example.com"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-sm font-medium">Category</label>
+                  {categories.filter((c) => c !== "all").length > 0 ? (
+                    <>
+                      <Select
+                        value={useCustomCategory ? "__custom" : addDomainData.category || ""}
+                        onValueChange={(val) => {
+                          if (val === "__custom") {
+                            setUseCustomCategory(true);
+                            setAddDomainData((prev) => ({ ...prev, category: "" }));
+                          } else {
+                            setUseCustomCategory(false);
+                            setAddDomainData((prev) => ({ ...prev, category: val }));
+                          }
+                        }}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select category" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {categories
+                            .filter((c) => c !== "all")
+                            .map((category) => (
+                              <SelectItem key={category} value={category}>
+                                {category}
+                              </SelectItem>
+                            ))}
+                          <SelectItem value="__custom">Custom...</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      {useCustomCategory && (
+                        <Input
+                          value={addDomainData.category}
+                          onChange={(e) =>
+                            setAddDomainData((prev) => ({ ...prev, category: e.target.value }))
+                          }
+                          placeholder="Enter custom category"
+                        />
+                      )}
+                    </>
+                  ) : (
+                    <Input
+                      value={addDomainData.category}
+                      onChange={(e) => setAddDomainData((prev) => ({ ...prev, category: e.target.value }))}
+                      placeholder="Category"
+                    />
+                  )}
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Tag</label>
+                  <Input
+                    value={addDomainData.tag}
+                    onChange={(e) => setAddDomainData((prev) => ({ ...prev, tag: e.target.value }))}
+                    placeholder="Tag"
+                  />
+                </div>
+              </div>
+
+              {addDomainError && (
+                <div className="text-sm text-red-600 dark:text-red-400">{addDomainError}</div>
+              )}
+
+              <div className="flex gap-2 flex-wrap">
+                <Button onClick={handleAddDomain} disabled={addingDomain}>
+                  {addingDomain ? (
+                    <>
+                      <div className="h-4 w-4 border-2 border-current border-t-transparent rounded-full animate-spin mr-2" />
+                      Adding...
+                    </>
+                  ) : (
+                    <>
+                      <Plus className="h-4 w-4 mr-2" />
+                      Add Domain
+                    </>
+                  )}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setAddDomainData({
+                      domain_name: "",
+                      display_name: "",
+                      uptime_url: "",
+                      category: "",
+                      tag: "",
+                    });
+                    setAddDomainError("");
+                  }}
+                >
+                  Clear
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
       {/* Filters and Search */}
       <div className="mb-6 space-y-4">
-        <div className="flex flex-col sm:flex-row gap-4">
+        <div className="flex flex-col lg:flex-row gap-4">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
             <Input
@@ -540,7 +833,7 @@ export default function SpeedTestPage() {
             />
           </div>
           <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-            <SelectTrigger className="w-full sm:w-[200px]">
+            <SelectTrigger className="w-full lg:w-[200px]">
               <SelectValue placeholder="All Categories" />
             </SelectTrigger>
             <SelectContent>
@@ -552,7 +845,7 @@ export default function SpeedTestPage() {
             </SelectContent>
           </Select>
           <Select value={sortBy} onValueChange={(value) => setSortBy(value as any)}>
-            <SelectTrigger className="w-full sm:w-[200px]">
+            <SelectTrigger className="w-full lg:w-[200px]">
               <SelectValue placeholder="Sort by" />
             </SelectTrigger>
             <SelectContent>
@@ -584,12 +877,13 @@ export default function SpeedTestPage() {
         <div className="text-sm text-muted-foreground">
           Showing {filteredDomains.length} of {domains.length} domains
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-col sm:flex-row flex-wrap gap-2">
           <Button
             variant="outline"
             size="sm"
             onClick={selectAllFiltered}
             disabled={filteredDomains.length === 0}
+            className="w-full sm:w-auto"
           >
             Select All ({filteredDomains.length})
           </Button>
@@ -598,6 +892,7 @@ export default function SpeedTestPage() {
             size="sm"
             onClick={clearSelection}
             disabled={selectedDomains.size === 0}
+            className="w-full sm:w-auto"
           >
             Clear Selection
           </Button>
@@ -606,6 +901,7 @@ export default function SpeedTestPage() {
             size="sm"
             onClick={analyzeSelectedDomains}
             disabled={selectedDomains.size === 0 || analyzingBatch}
+            className="w-full sm:w-auto"
           >
             {analyzingBatch ? (
               <>
@@ -803,8 +1099,8 @@ export default function SpeedTestPage() {
                 }}
               >
                 <CardHeader>
-                  <div className="flex flex-row items-start justify-between ">
-                    <div className="pt-1 pr-3" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex flex-row items-start justify-between gap-3">
+                    <div className="pt-1" onClick={(e) => e.stopPropagation()}>
                       <Checkbox
                         checked={selectedDomains.has(domain.id)}
                         onCheckedChange={(checked) => {
@@ -1197,6 +1493,7 @@ export default function SpeedTestPage() {
           </Card>
         </div>
       )}
+
     </div>
   );
 }

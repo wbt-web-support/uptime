@@ -746,7 +746,7 @@ export default function SpeedTestAnalysisPage() {
       {/* Strategy Selector */}
       <div className="mb-6">
         <Select value={strategy} onValueChange={(value) => setStrategy(value as 'mobile' | 'desktop')}>
-          <SelectTrigger className="w-[200px]">
+          <SelectTrigger className="w-full sm:w-[200px]">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -811,7 +811,7 @@ export default function SpeedTestAnalysisPage() {
           return (
             <Card key={url} className="hover:shadow-lg transition-shadow">
               <CardHeader>
-                <div className="flex items-start justify-between">
+                <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
                   <div className="flex-1">
                     <CardTitle className="text-lg mb-2 flex items-center gap-2">
                       <Globe className="h-5 w-5" />
@@ -823,7 +823,7 @@ export default function SpeedTestAnalysisPage() {
                       </CardDescription>
                     )}
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     {/* {result && result.raw_data && (
                       <Button
                         variant="outline"
@@ -910,7 +910,7 @@ export default function SpeedTestAnalysisPage() {
                 {result && result.performance_score !== null && result.performance_score >= 0 ? (
                   <div className="space-y-6">
                     {/* Scores */}
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
                       <div className={`p-4 rounded-lg ${result.performance_score !== null ? getScoreBgColor(result.performance_score) : 'bg-gray-100 dark:bg-gray-800'}`}>
                         <div className="text-xs text-muted-foreground mb-1">Performance</div>
                         <div className={`text-3xl font-bold ${result.performance_score !== null ? getScoreColor(result.performance_score) : 'text-gray-500'}`}>
@@ -940,7 +940,7 @@ export default function SpeedTestAnalysisPage() {
                     {/* Core Web Vitals */}
                     <div>
                       <h3 className="text-sm font-semibold mb-3">Core Web Vitals</h3>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
                         <div className="p-3 border rounded-lg">
                           <div className="text-xs text-muted-foreground mb-1">LCP</div>
                           <div className="text-lg font-semibold">
@@ -985,7 +985,7 @@ export default function SpeedTestAnalysisPage() {
                     {/* Additional Metrics */}
                     <div>
                       <h3 className="text-sm font-semibold mb-3">Additional Metrics</h3>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
                         <div className="p-3 border rounded-lg">
                           <div className="text-xs text-muted-foreground mb-1">FCP</div>
                           <div className="text-lg font-semibold">
