@@ -30,7 +30,7 @@ export default async function RootLayout({
 
   return (
     <html lang="en" className={GeistSans.className} suppressHydrationWarning>
-      <body className="bg-background min-h-screen flex flex-col">
+      <body className="bg-background min-h-screen flex flex-col" suppressHydrationWarning>
         <ThemeProvider
           attribute="class"
           defaultTheme="system"
