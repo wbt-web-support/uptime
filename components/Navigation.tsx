@@ -57,7 +57,7 @@ export default function Navigation() {
 
   const navigationItems = [
     { name: "Home", href: "/", icon: Home, requiredAuth: false },
-    { name: "Speed Test", href: "/speed-test", icon: Gauge, requiredAuth: false },
+    { name: "Speed Test", href: "/speed-test", icon: Gauge, requiredAuth: true },
     { name: "Admin", href: "/admin", icon: Shield, requiredAuth: true },
     { name: "Notifications", href: "/admin/notifications", icon: Bell, requiredAuth: true },
   ];
