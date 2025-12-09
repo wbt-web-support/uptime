@@ -9,6 +9,7 @@ import LoadingSpinner from "@/components/LoadingSpinner";
 import { Gauge, Globe, ExternalLink, AlertCircle, Search, Plus, X, Trash2, Link as LinkIcon, RefreshCw, CheckCircle, Clock, Table as TableIcon, LayoutGrid } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
 
 interface Domain {
   id: string;
@@ -45,6 +46,11 @@ export default function SpeedTestPage() {
     timestamp: number;
   }>>({});
   const [latestResults, setLatestResults] = useState<Record<string, any>>({});
+  const [selectedDomains, setSelectedDomains] = useState<Set<string>>(new Set());
+  const [analyzingBatch, setAnalyzingBatch] = useState(false);
+  const [analysisLog, setAnalysisLog] = useState<
+    { domainId: string; name: string; status: "queued" | "running" | "done" | "error"; finishedAt?: number; message?: string }[]
+  >([]);
 
   const supabase = createClient();
   const router = useRouter();
@@ -124,6 +130,105 @@ export default function SpeedTestPage() {
     } finally {
       setLoadingResults(false);
     }
+  };
+
+  const toggleDomainSelection = (id: string) => {
+    setSelectedDomains((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const selectAllFiltered = () => {
+    setSelectedDomains(new Set(filteredDomains.map((d) => d.id)));
+  };
+
+  const clearSelection = () => {
+    setSelectedDomains(new Set());
+  };
+
+  const startBackgroundTestsForDomain = async (domain: Domain): Promise<{ success: boolean; errors: string[] }> => {
+    const urlsToTest = [domain.uptime_url, ...(domain.inner_pages || [])];
+    const strategies: Array<"mobile" | "desktop"> = ["mobile", "desktop"];
+
+    const errors: string[] = [];
+
+    // Start all background tests (fire and forget with await for queue awareness) for both strategies
+    const results = await Promise.allSettled(
+      urlsToTest.flatMap((url) =>
+        strategies.map(async (strategy) => {
+          try {
+            const res = await fetch("/api/pagespeed/background", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                domainId: domain.id,
+                url,
+                strategy,
+              }),
+            });
+            if (!res.ok) {
+              errors.push(`Queue failed for ${url} (${strategy}): ${res.status}`);
+            }
+          } catch (err: any) {
+            console.error(`Error starting background test for ${url} (${strategy}):`, err);
+            errors.push(`Queue failed for ${url} (${strategy}): ${err?.message || "unknown error"}`);
+          }
+        })
+      )
+    );
+
+    const success = errors.length === 0 && results.every((r) => r.status === "fulfilled");
+    return { success, errors };
+  };
+
+  const analyzeSelectedDomains = async () => {
+    if (selectedDomains.size === 0 || analyzingBatch) return;
+    setAnalyzingBatch(true);
+    setAnalysisLog([]);
+    const targets = domains.filter((d) => selectedDomains.has(d.id));
+    const concurrency = Math.min(3, targets.length || 1);
+    let index = 0;
+
+    const runNext = async (): Promise<void> => {
+      const currentIndex = index++;
+      if (currentIndex >= targets.length) return;
+      const domain = targets[currentIndex];
+      setAnalysisLog((prev) => [
+        ...prev,
+        { domainId: domain.id, name: domain.display_name || domain.domain_name, status: "running" },
+      ]);
+      try {
+        const { success, errors } = await startBackgroundTestsForDomain(domain);
+        setAnalysisLog((prev) =>
+          prev.map((item) =>
+            item.domainId === domain.id
+              ? {
+                  ...item,
+                  status: success ? "done" : "error",
+                  finishedAt: Date.now(),
+                  message: errors.join("; "),
+                }
+              : item
+          )
+        );
+      } catch (err: any) {
+        setAnalysisLog((prev) =>
+          prev.map((item) =>
+            item.domainId === domain.id ? { ...item, status: "error", message: err?.message || "Failed" } : item
+          )
+        );
+      }
+      await runNext();
+    };
+
+    await Promise.all(Array.from({ length: concurrency }).map(() => runNext()));
+    setAnalyzingBatch(false);
+    fetchLatestResults(domains);
   };
 
   useEffect(() => {
@@ -396,29 +501,6 @@ export default function SpeedTestPage() {
     );
   };
 
-  const startBackgroundTestsForDomain = async (domain: Domain) => {
-    const urlsToTest = [domain.uptime_url, ...(domain.inner_pages || [])];
-    
-    // Start all background tests (fire and forget)
-    urlsToTest.forEach(async (url) => {
-      try {
-        await fetch('/api/pagespeed/background', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            domainId: domain.id,
-            url,
-            strategy: 'mobile', // Default, user can change on analysis page
-          }),
-        });
-      } catch (err) {
-        console.error(`Error starting background test for ${url}:`, err);
-      }
-    });
-  };
-
   const openAddUrlModal = (domainId: string) => {
     setOpenModal(domainId);
     setNewUrl("");
@@ -502,7 +584,83 @@ export default function SpeedTestPage() {
         <div className="text-sm text-muted-foreground">
           Showing {filteredDomains.length} of {domains.length} domains
         </div>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={selectAllFiltered}
+            disabled={filteredDomains.length === 0}
+          >
+            Select All ({filteredDomains.length})
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={clearSelection}
+            disabled={selectedDomains.size === 0}
+          >
+            Clear Selection
+          </Button>
+          <Button
+            variant="default"
+            size="sm"
+            onClick={analyzeSelectedDomains}
+            disabled={selectedDomains.size === 0 || analyzingBatch}
+          >
+            {analyzingBatch ? (
+              <>
+                <div className="h-4 w-4 border-2 border-current border-t-transparent rounded-full animate-spin mr-2" />
+                Analyzing...
+              </>
+            ) : (
+              <>
+                Analyze Selected ({selectedDomains.size})
+              </>
+            )}
+          </Button>
+        </div>
       </div>
+
+      {analysisLog.length > 0 && analyzingBatch && (
+        <Card className="mb-4">
+          <CardContent className="pt-4">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm font-semibold">Batch Analysis Status</span>
+              {analyzingBatch && (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <div className="h-4 w-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                  Running...
+                </div>
+              )}
+            </div>
+            <div className="space-y-2">
+              {[...analysisLog]
+                .sort((a, b) => (b.finishedAt || 0) - (a.finishedAt || 0))
+                .map((item) => (
+                  <div
+                    key={item.domainId}
+                    className="flex items-center justify-between text-xs border rounded-md px-3 py-2 bg-muted/40"
+                  >
+                    <div className="flex items-center gap-2">
+                    <Checkbox checked disabled className="pointer-events-none" />
+                      <span className="font-medium">{item.name}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {item.status === "running" && <span className="text-amber-600">Running</span>}
+                      {item.status === "done" && <span className="text-green-600">Done</span>}
+                      {item.status === "error" && (
+                        <span className="text-red-600" title={item.message}>
+                          Error
+                        </span>
+                      )}
+                      {item.status === "queued" && <span className="text-muted-foreground">Queued</span>}
+                    </div>
+                  </div>
+                ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {error && (
         <Card className="mb-6 border-red-300 bg-red-50 dark:bg-red-900/10">
@@ -538,6 +696,22 @@ export default function SpeedTestPage() {
           <table className="min-w-full text-sm border">
             <thead className="bg-muted/50">
               <tr>
+                <th className="text-left px-4 py-2 border-b w-10">
+                  <Checkbox
+                    checked={
+                      filteredDomains.length === 0
+                        ? false
+                        : selectedDomains.size === filteredDomains.length
+                        ? true
+                        : "indeterminate"
+                    }
+                    onCheckedChange={(checked) => {
+                      if (checked) selectAllFiltered();
+                      else clearSelection();
+                    }}
+                    aria-label="Select all domains"
+                  />
+                </th>
                 <th className="text-left px-4 py-2 border-b">Domain</th>
                 <th className="text-left px-4 py-2 border-b">Category</th>
                 <th className="text-left px-4 py-2 border-b">Tag</th>
@@ -563,6 +737,23 @@ export default function SpeedTestPage() {
                       router.push(`/speed-test/${domain.id}`);
                     }}
                   >
+                    <td className="px-4 py-2 border-b" onClick={(e) => e.stopPropagation()}>
+                      <Checkbox
+                        checked={selectedDomains.has(domain.id)}
+                        onCheckedChange={(checked) => {
+                          if (checked) {
+                            setSelectedDomains((prev) => new Set(prev).add(domain.id));
+                          } else {
+                            setSelectedDomains((prev) => {
+                              const next = new Set(prev);
+                              next.delete(domain.id);
+                              return next;
+                            });
+                          }
+                        }}
+                        aria-label={`Select ${domain.display_name || domain.domain_name}`}
+                      />
+                    </td>
                     <td className="px-4 py-2 border-b">
                       <div className="font-medium">{domain.display_name || domain.domain_name}</div>
                       <div className="text-xs text-muted-foreground">{domain.domain_name}</div>
@@ -613,6 +804,23 @@ export default function SpeedTestPage() {
               >
                 <CardHeader>
                   <div className="flex flex-row items-start justify-between ">
+                    <div className="pt-1 pr-3" onClick={(e) => e.stopPropagation()}>
+                      <Checkbox
+                        checked={selectedDomains.has(domain.id)}
+                        onCheckedChange={(checked) => {
+                          if (checked) {
+                            setSelectedDomains((prev) => new Set(prev).add(domain.id));
+                          } else {
+                            setSelectedDomains((prev) => {
+                              const next = new Set(prev);
+                              next.delete(domain.id);
+                              return next;
+                            });
+                          }
+                        }}
+                        aria-label={`Select ${domain.display_name || domain.domain_name}`}
+                      />
+                    </div>
                     <div className="flex-1">
                       <CardTitle className="text-lg mb-1">
                         {domain.display_name || domain.domain_name}
