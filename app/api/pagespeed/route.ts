@@ -77,7 +77,8 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
 
-    const pagespeedUrl = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(normalizedUrl)}&strategy=${strategy}&key=${apiKey}`;
+    // Request all categories so we can populate scores for performance, accessibility, best-practices, and SEO
+    const pagespeedUrl = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(normalizedUrl)}&strategy=${strategy}&category=performance&category=accessibility&category=best-practices&category=seo&key=${apiKey}`;
     
     console.log(`Calling PageSpeed API for: ${normalizedUrl}`);
     
@@ -151,10 +152,34 @@ export async function POST(request: NextRequest) {
       }, { status: 500 });
     }
 
-    const performanceScore = Math.round(categories.performance?.score * 100 || 0);
-    const accessibilityScore = Math.round(categories.accessibility?.score * 100 || 0);
-    const bestPracticesScore = Math.round(categories['best-practices']?.score * 100 || 0);
-    const seoScore = Math.round(categories.seo?.score * 100 || 0);
+    // Log category scores for debugging
+    console.log('📊 Category scores from API:', {
+      performance: categories.performance?.score,
+      accessibility: categories.accessibility?.score,
+      'best-practices': categories['best-practices']?.score,
+      seo: categories.seo?.score,
+      allCategories: Object.keys(categories)
+    });
+
+    // Extract scores - convert from 0-1 scale to 0-100, or null if not available
+    const getScore = (score: number | null | undefined): number | null => {
+      if (score === null || score === undefined) {
+        return null;
+      }
+      return Math.round(score * 100);
+    };
+
+    const performanceScore = getScore(categories.performance?.score);
+    const accessibilityScore = getScore(categories.accessibility?.score);
+    const bestPracticesScore = getScore(categories['best-practices']?.score);
+    const seoScore = getScore(categories.seo?.score);
+
+    console.log('📊 Extracted scores:', {
+      performance: performanceScore,
+      accessibility: accessibilityScore,
+      bestPractices: bestPracticesScore,
+      seo: seoScore
+    });
 
     // Extract Core Web Vitals
     const firstContentfulPaint = audits['first-contentful-paint']?.numericValue || null;
