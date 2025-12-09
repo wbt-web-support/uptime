@@ -6,7 +6,7 @@ import { createClient } from "@/utils/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import LoadingSpinner from "@/components/LoadingSpinner";
-import { Gauge, Globe, ArrowLeft, RefreshCw, Smartphone, Monitor, AlertCircle, CheckCircle, Copy, Check } from "lucide-react";
+import { Gauge, Globe, ArrowLeft, RefreshCw, Smartphone, Monitor, AlertCircle, CheckCircle, Copy, Check, ChevronDown, ChevronRight, Image as ImageIcon } from "lucide-react";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 
 interface PageSpeedResult {
@@ -50,6 +50,8 @@ export default function SpeedTestAnalysisPage() {
   const [fromCache, setFromCache] = useState<Record<string, boolean>>({});
   const [testingUrls, setTestingUrls] = useState<Set<string>>(new Set());
   const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
+  const [treemapOpen, setTreemapOpen] = useState<Set<string>>(new Set());
+  const [screenshotOpen, setScreenshotOpen] = useState<Set<string>>(new Set());
 
   const supabase = createClient();
 
@@ -568,6 +570,49 @@ export default function SpeedTestAnalysisPage() {
     return `${Math.round(value)}${unit}`;
   };
 
+  const formatBytes = (bytes: number | null | undefined) => {
+    if (bytes === null || bytes === undefined) return 'N/A';
+    if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+    if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${bytes} B`;
+  };
+
+  const renderTreemapNodes = (nodes: any[], level = 0) => {
+    if (!nodes || !Array.isArray(nodes)) return null;
+    return (
+      <ul className="space-y-2">
+        {nodes.map((node, idx) => (
+          <li
+            key={`${node.name || 'node'}-${idx}`}
+            className="border rounded-md bg-background/60"
+          >
+            <div className="px-3 py-2 flex flex-col gap-1">
+              <div className="font-semibold text-sm break-all">
+                {node.name || '(unnamed)'}
+              </div>
+              <div className="text-xs text-muted-foreground flex flex-wrap gap-3">
+                {'resourceBytes' in node && (
+                  <span>Resource: {formatBytes(Number(node.resourceBytes))}</span>
+                )}
+                {'unusedBytes' in node && (
+                  <span>Unused: {formatBytes(Number(node.unusedBytes))}</span>
+                )}
+                {'encodedBytes' in node && (
+                  <span>Encoded: {formatBytes(Number(node.encodedBytes))}</span>
+                )}
+              </div>
+            </div>
+            {node.children && node.children.length > 0 && (
+              <div className="pl-4 pr-2 pb-2">
+                {renderTreemapNodes(node.children, level + 1)}
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+    );
+  };
+
   const copyRawData = async (url: string) => {
     const resultKey = `${url}-${strategy}`;
     const result = results[resultKey];
@@ -585,6 +630,68 @@ export default function SpeedTestAnalysisPage() {
     } catch (err) {
       console.error('Failed to copy raw data:', err);
     }
+  };
+
+  const copyTreemapData = async (url: string) => {
+    const resultKey = `${url}-${strategy}`;
+    const result = results[resultKey];
+    const treemap =
+      result?.raw_data?.lighthouseResult?.audits?.['script-treemap-data']?.details ||
+      result?.raw_data?.lighthouseResult?.audits?.['treemap-data']?.details ||
+      null;
+
+    if (!treemap) {
+      console.error('No treemap data available for', url);
+      return;
+    }
+
+    try {
+      const jsonString = JSON.stringify(treemap, null, 2);
+      await navigator.clipboard.writeText(jsonString);
+      setCopiedUrl(resultKey + '-treemap');
+      setTimeout(() => setCopiedUrl(null), 2000);
+    } catch (err) {
+      console.error('Failed to copy treemap data:', err);
+    }
+  };
+
+  const toggleTreemap = (key: string) => {
+    setTreemapOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  };
+
+  const toggleScreenshot = (key: string) => {
+    setScreenshotOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  };
+
+  const getFinalScreenshotSrc = (result: PageSpeedResult | undefined) => {
+    if (!result?.raw_data?.lighthouseResult?.audits?.['final-screenshot']?.details?.data) {
+      return null;
+    }
+    const data = result.raw_data.lighthouseResult.audits['final-screenshot'].details.data as string;
+    // If already has data URI prefix, return as-is; otherwise prefix as PNG
+    if (data.startsWith('data:image')) return data;
+    return `data:image/jpeg;base64,${data}`;
+  };
+
+  const getScreenshotThumbnails = (result: PageSpeedResult | undefined) => {
+    const thumbs = result?.raw_data?.lighthouseResult?.audits?.['screenshot-thumbnails']?.details?.items || [];
+    return Array.isArray(thumbs) ? thumbs : [];
   };
 
   if (loading) {
@@ -675,6 +782,14 @@ export default function SpeedTestAnalysisPage() {
           // Use composite key for results: `${url}-${strategy}`
           const resultKey = `${url}-${strategy}`;
           const result = results[resultKey];
+          const treemapDetails =
+            result?.raw_data?.lighthouseResult?.audits?.['script-treemap-data']?.details ||
+            result?.raw_data?.lighthouseResult?.audits?.['treemap-data']?.details ||
+            null;
+          const treemapKey = `${resultKey}-treemap`;
+          const screenshotKey = `${resultKey}-screenshot`;
+          const finalScreenshotSrc = getFinalScreenshotSrc(result);
+          const screenshotThumbs = getScreenshotThumbnails(result);
           
           // Debug logging
           if (strategy === 'desktop') {
@@ -709,7 +824,7 @@ export default function SpeedTestAnalysisPage() {
                     )}
                   </div>
                   <div className="flex items-center gap-2">
-                    {result && result.raw_data && (
+                    {/* {result && result.raw_data && (
                       <Button
                         variant="outline"
                         size="sm"
@@ -725,6 +840,46 @@ export default function SpeedTestAnalysisPage() {
                           <>
                             <Copy className="h-4 w-4 mr-2" />
                             Copy Data
+                          </>
+                        )}
+                      </Button>
+                    )} */}
+                    {finalScreenshotSrc && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => toggleScreenshot(screenshotKey)}
+                        title="Toggle final screenshot"
+                      >
+                        {screenshotOpen.has(screenshotKey) ? (
+                          <>
+                            <ChevronDown className="h-4 w-4 mr-2" />
+                            Hide Screenshot
+                          </>
+                        ) : (
+                          <>
+                            <ImageIcon className="h-4 w-4 mr-2" />
+                            Show Screenshot
+                          </>
+                        )}
+                      </Button>
+                    )}
+                    {treemapDetails && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => toggleTreemap(treemapKey)}
+                        title="Toggle treemap data"
+                      >
+                        {treemapOpen.has(treemapKey) ? (
+                          <>
+                            <ChevronDown className="h-4 w-4 mr-2" />
+                            Hide Treemap
+                          </>
+                        ) : (
+                          <>
+                            <ChevronRight className="h-4 w-4 mr-2" />
+                            Show Treemap
                           </>
                         )}
                       </Button>
@@ -870,6 +1025,69 @@ export default function SpeedTestAnalysisPage() {
                     <div className="text-xs text-muted-foreground pt-2 border-t">
                       Last tested: {new Date(result.tested_at).toLocaleString()}
                     </div>
+                    {finalScreenshotSrc && screenshotOpen.has(screenshotKey) && (
+                      <div className="mt-4 border rounded-lg bg-muted/30">
+                        <div className="px-3 py-2 border-b text-sm font-semibold">Final Screenshot</div>
+                        <div className="p-3 flex flex-col gap-3">
+                          <img
+                            src={finalScreenshotSrc}
+                            alt="PageSpeed final screenshot"
+                            className="rounded-md border max-h-[480px] object-contain"
+                          />
+                          {screenshotThumbs && screenshotThumbs.length > 0 && (
+                            <div className="space-y-2">
+                              <div className="text-xs text-muted-foreground">Thumbnails</div>
+                              <div className="flex flex-wrap gap-2">
+                                {screenshotThumbs.map((thumb: any, idx: number) => (
+                                  <img
+                                    key={idx}
+                                    src={
+                                      thumb.data?.startsWith('data:image')
+                                        ? thumb.data
+                                        : `data:image/jpeg;base64,${thumb.data}`
+                                    }
+                                    alt={`Thumbnail ${idx + 1}`}
+                                    className="h-20 w-auto rounded border object-contain"
+                                  />
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                    {treemapDetails && treemapOpen.has(treemapKey) && (
+                      <div className="mt-4 border rounded-lg bg-muted/30">
+                        <div className="flex items-center justify-between px-3 py-2 border-b">
+                          <div className="text-sm font-semibold">Treemap Data</div>
+                          {/* <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => copyTreemapData(url)}
+                          >
+                            {copiedUrl === `${resultKey}-treemap` ? (
+                              <>
+                                <Check className="h-4 w-4 mr-2" />
+                                Copied
+                              </>
+                            ) : (
+                              <>
+                                <Copy className="h-4 w-4 mr-2" />
+                                Copy JSON
+                              </>
+                            )}
+                          </Button> */}
+                        </div>
+                        <div className="p-3 max-h-96 overflow-auto space-y-3">
+                          <div className="text-xs text-muted-foreground">
+                            Showing treemap resources (resource, unused, encoded bytes).
+                          </div>
+                          {renderTreemapNodes(treemapDetails.nodes || []) || (
+                            <div className="text-xs text-muted-foreground">No treemap nodes.</div>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ) : result && result.performance_score === -1 ? (
                   <div className="text-center py-8">

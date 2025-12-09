@@ -6,7 +6,7 @@ import { createClient } from "@/utils/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import LoadingSpinner from "@/components/LoadingSpinner";
-import { Gauge, Globe, ExternalLink, AlertCircle, Search, Plus, X, Trash2, Link as LinkIcon, RefreshCw, CheckCircle, Clock } from "lucide-react";
+import { Gauge, Globe, ExternalLink, AlertCircle, Search, Plus, X, Trash2, Link as LinkIcon, RefreshCw, CheckCircle, Clock, Table as TableIcon, LayoutGrid } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 
@@ -26,10 +26,12 @@ interface Domain {
 export default function SpeedTestPage() {
   const [domains, setDomains] = useState<Domain[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingResults, setLoadingResults] = useState(false);
   const [error, setError] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [sortBy, setSortBy] = useState<"domain" | "newest" | "oldest" | "category">("domain");
+  const [viewMode, setViewMode] = useState<"cards" | "table">("cards");
   const [openModal, setOpenModal] = useState<string | null>(null);
   const [newUrl, setNewUrl] = useState("");
   const [savingUrl, setSavingUrl] = useState<string | null>(null);
@@ -42,6 +44,7 @@ export default function SpeedTestPage() {
     error?: string;
     timestamp: number;
   }>>({});
+  const [latestResults, setLatestResults] = useState<Record<string, any>>({});
 
   const supabase = createClient();
   const router = useRouter();
@@ -81,11 +84,45 @@ export default function SpeedTestPage() {
       });
 
       setDomains(domainsWithParsedPages);
+      fetchLatestResults(domainsWithParsedPages);
     } catch (err: any) {
       console.error("Error fetching domains:", err);
       setError(err.message || "Failed to fetch domains");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchLatestResults = async (domainList: Domain[]) => {
+    const ids = domainList.map((d) => d.id);
+    if (ids.length === 0) return;
+    setLoadingResults(true);
+    try {
+      const { data, error: resultsError } = await supabase
+        .from("pagespeed_results")
+        .select(
+          "id, domain_id, url, strategy, performance_score, accessibility_score, best_practices_score, seo_score, first_contentful_paint, speed_index, time_to_interactive, tested_at"
+        )
+        .in("domain_id", ids)
+        .order("tested_at", { ascending: false });
+
+      if (resultsError) throw resultsError;
+
+      const map: Record<string, any> = {};
+      (data || []).forEach((row: any) => {
+        // Prefer newest mobile result; if none, take newest overall
+        if (!map[row.domain_id]) {
+          map[row.domain_id] = row;
+        } else if (map[row.domain_id].strategy !== "mobile" && row.strategy === "mobile") {
+          map[row.domain_id] = row;
+        }
+      });
+
+      setLatestResults(map);
+    } catch (err: any) {
+      console.error("Error fetching latest PageSpeed results:", err);
+    } finally {
+      setLoadingResults(false);
     }
   };
 
@@ -133,6 +170,20 @@ export default function SpeedTestPage() {
       month: "short",
       day: "numeric",
     });
+  };
+
+  const formatMs = (value: number | null | undefined) => {
+    if (value === null || value === undefined) return "N/A";
+    const ms = Number(value);
+    if (Number.isNaN(ms)) return "N/A";
+    if (ms >= 1000) return `${(ms / 1000).toFixed(2)}s`;
+    return `${Math.round(ms)}ms`;
+  };
+
+  const formatScore = (value: number | null | undefined) => {
+    if (value === null || value === undefined) return "N/A";
+    if (value < 0) return "Error";
+    return `${value}`;
   };
 
   const parseUrls = (urlString: string): string[] => {
@@ -429,6 +480,24 @@ export default function SpeedTestPage() {
               <SelectItem value="category">Sort by Category</SelectItem>
             </SelectContent>
           </Select>
+          <div className="flex gap-2">
+            <Button
+              variant={viewMode === "cards" ? "default" : "outline"}
+              size="icon"
+              onClick={() => setViewMode("cards")}
+              title="Card view"
+            >
+              <LayoutGrid className="h-4 w-4" />
+            </Button>
+            <Button
+              variant={viewMode === "table" ? "default" : "outline"}
+              size="icon"
+              onClick={() => setViewMode("table")}
+              title="Table view"
+            >
+              <TableIcon className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
         <div className="text-sm text-muted-foreground">
           Showing {filteredDomains.length} of {domains.length} domains
@@ -464,230 +533,329 @@ export default function SpeedTestPage() {
             </div>
           </CardContent>
         </Card>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredDomains.map((domain) => (
-            <Card 
-              key={domain.id} 
-              className="hover:shadow-lg transition-shadow cursor-pointer"
-              onClick={() => {
-                // Start background tests for this domain before navigating
-                startBackgroundTestsForDomain(domain);
-                router.push(`/speed-test/${domain.id}`);
-              }}
-            >
-              <CardHeader>
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <CardTitle className="text-lg mb-1">
-                      {domain.display_name || domain.domain_name}
-                    </CardTitle>
-                    <CardDescription className="flex items-center gap-1 mt-1">
-                      <Globe className="h-3 w-3" />
-                      <a
-                      href={domain.uptime_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-sm text-brand hover:underline flex items-center gap-1"
-                    > <span className="text-xs">{domain.domain_name}</span>
-                   
-                    </a>
-                    </CardDescription>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  <div>
-                   
-                    
-                      
-                  </div>
-                  
-                  {domain.category && (
-                    <div>
-                      <span className="text-xs text-muted-foreground">Category: </span>
-                      <span className="text-xs font-medium text-blue-600 dark:text-blue-400">
-                        {domain.category}
-                      </span>
-                    </div>
-                  )}
-                  
-                  {domain.tag && (
-                    <div>
-                      <span className="text-xs text-muted-foreground">Tag: </span>
-                      <span className="text-xs font-medium text-purple-600 dark:text-purple-400">
-                        {domain.tag}
-                      </span>
-                    </div>
-                  )}
-                  
-                  <div>
-                    <span className="text-xs text-muted-foreground">Added: </span>
-                    <span className="text-xs">{formatDate(domain.created_at)}</span>
-                  </div>
-
-                  {/* Speed Test Results */}
-                  <div className="pt-2 border-t space-y-2">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-xs font-medium text-muted-foreground">
-                        Speed Test Results:
-                      </span>
+      ) : viewMode === "table" ? (
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm border">
+            <thead className="bg-muted/50">
+              <tr>
+                <th className="text-left px-4 py-2 border-b">Domain</th>
+                <th className="text-left px-4 py-2 border-b">Category</th>
+                <th className="text-left px-4 py-2 border-b">Tag</th>
+                <th className="text-left px-4 py-2 border-b">Performance</th>
+                <th className="text-left px-4 py-2 border-b">Accessibility</th>
+                <th className="text-left px-4 py-2 border-b">Best Practices</th>
+                <th className="text-left px-4 py-2 border-b">SEO</th>
+                <th className="text-left px-4 py-2 border-b">FCP</th>
+                <th className="text-left px-4 py-2 border-b">Speed Index</th>
+                <th className="text-left px-4 py-2 border-b">TTI</th>
+                <th className="text-left px-4 py-2 border-b">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredDomains.map((domain) => {
+                const latest = latestResults[domain.id];
+                return (
+                  <tr
+                    key={domain.id}
+                    className="hover:bg-muted/50 cursor-pointer"
+                    onClick={() => {
+                      startBackgroundTestsForDomain(domain);
+                      router.push(`/speed-test/${domain.id}`);
+                    }}
+                  >
+                    <td className="px-4 py-2 border-b">
+                      <div className="font-medium">{domain.display_name || domain.domain_name}</div>
+                      <div className="text-xs text-muted-foreground">{domain.domain_name}</div>
+                    </td>
+                    <td className="px-4 py-2 border-b text-xs">{domain.category || "-"}</td>
+                    <td className="px-4 py-2 border-b text-xs">{domain.tag || "-"}</td>
+                    <td className="px-4 py-2 border-b">{formatScore(latest?.performance_score)}</td>
+                    <td className="px-4 py-2 border-b">{formatScore(latest?.accessibility_score)}</td>
+                    <td className="px-4 py-2 border-b">{formatScore(latest?.best_practices_score)}</td>
+                    <td className="px-4 py-2 border-b">{formatScore(latest?.seo_score)}</td>
+                    <td className="px-4 py-2 border-b">{formatMs(latest?.first_contentful_paint)}</td>
+                    <td className="px-4 py-2 border-b">{formatMs(latest?.speed_index)}</td>
+                    <td className="px-4 py-2 border-b">{formatMs(latest?.time_to_interactive)}</td>
+                    <td className="px-4 py-2 border-b">
                       <Button
-                        variant="ghost"
+                        variant="outline"
                         size="sm"
-                        className="h-6 text-xs"
                         onClick={(e) => {
                           e.stopPropagation();
                           router.push(`/speed-test/${domain.id}`);
                         }}
                       >
-                        <Gauge className="h-3 w-3 mr-1" />
-                        View Analysis
+                        View
                       </Button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          {loadingResults && (
+            <div className="text-xs text-muted-foreground mt-2">Loading recent analysis…</div>
+          )}
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {filteredDomains.map((domain) => {
+            const latest = latestResults[domain.id];
+            return (
+              <Card 
+                key={domain.id} 
+                className="hover:shadow-lg transition-shadow cursor-pointer"
+                onClick={() => {
+                  // Start background tests for this domain before navigating
+                  startBackgroundTestsForDomain(domain);
+                  router.push(`/speed-test/${domain.id}`);
+                }}
+              >
+                <CardHeader>
+                  <div className="flex flex-row items-start justify-between ">
+                    <div className="flex-1">
+                      <CardTitle className="text-lg mb-1">
+                        {domain.display_name || domain.domain_name}
+                      </CardTitle>
+                      <CardDescription className="flex items-center gap-1 mt-1">
+                        <Globe className="h-3 w-3" />
+                        <a
+                        href={domain.uptime_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-sm text-brand hover:underline flex items-center gap-1"
+                      > <span className="text-xs">{domain.domain_name}</span>
+                     
+                      </a>
+                      
+                      </CardDescription>
                     </div>
-
-                    {/* Main URL Test Result */}
-                    <div className="space-y-1">
-                      <div
-                        className={`flex items-center gap-2 p-2 rounded-md text-xs border ${
-                          speedTestResults[domain.uptime_url]?.status === 'success'
-                            ? 'bg-green-50 dark:bg-green-900/10 border-green-200 dark:border-green-800'
-                            : speedTestResults[domain.uptime_url]?.status === 'error'
-                            ? 'bg-red-50 dark:bg-red-900/10 border-red-200 dark:border-red-800'
-                            : 'bg-muted/50 border-border'
-                        }`}
-                      >
-                        <Globe className="h-3 w-3 flex-shrink-0" />
-                        <span className="flex-1 truncate font-mono text-xs">
-                          {domain.uptime_url}
-                        </span>
-                        {speedTestResults[domain.uptime_url]?.status === 'testing' ? (
-                          <div className="flex items-center gap-1 text-muted-foreground">
-                            <div className="h-3 w-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                            <span>Testing...</span>
-                          </div>
-                        ) : speedTestResults[domain.uptime_url]?.status === 'success' ? (
-                          <div className="flex items-center gap-1 text-green-600 dark:text-green-400">
-                            <CheckCircle className="h-3 w-3" />
-                            <span className="flex items-center gap-1">
-                              <Clock className="h-3 w-3" />
-                              {speedTestResults[domain.uptime_url]?.responseTime}ms
-                            </span>
-                          </div>
-                        ) : speedTestResults[domain.uptime_url]?.status === 'error' ? (
-                          <div className="flex items-center gap-1 text-red-600 dark:text-red-400">
-                            <AlertCircle className="h-3 w-3" />
-                            <span className="text-xs">{speedTestResults[domain.uptime_url]?.error || 'Error'}</span>
-                          </div>
-                        ) : (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-6 text-xs"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              testUrlSpeed(domain.uptime_url);
-                            }}
-                            disabled={testingUrls.has(domain.uptime_url)}
-                          >
-                            <Gauge className="h-3 w-3 mr-1" />
-                            Test
-                          </Button>
-                        )}
-                      </div>
+                    <div>
+                  {domain.category && (
+                    <div className="flex items-center gap-1">
+                      <span className="text-xs text-muted-foreground">Category:</span>
+                      <span className="text-xs font-medium text-blue-600 dark:text-blue-400 truncate max-w-[120px]" title={domain.category}>
+                        {domain.category.length > 18 ? `${domain.category.slice(0, 18)}…` : domain.category}
+                      </span>
                     </div>
+                  )}
+                  {domain.tag && (
+                    <div className="flex items-center gap-1">
+                      <span className="text-xs text-muted-foreground">Tag:</span>
+                      <span className="text-xs font-medium text-purple-600 dark:text-purple-400 truncate max-w-[100px]" title={domain.tag}>
+                        {domain.tag.length > 15 ? `${domain.tag.slice(0, 15)}…` : domain.tag}
+                      </span>
+                    </div>
+                  )}
 
-                    {/* Inner Pages Test Results */}
-                    {(domain.inner_pages || []).length > 0 && (
-                      <div className="space-y-1">
-                        {(domain.inner_pages || []).map((url, index) => (
-                          <div
-                            key={index}
-                            className={`flex items-center gap-2 p-2 rounded-md text-xs border ${
-                              speedTestResults[url]?.status === 'success'
-                                ? 'bg-green-50 dark:bg-green-900/10 border-green-200 dark:border-green-800'
-                                : speedTestResults[url]?.status === 'error'
-                                ? 'bg-red-50 dark:bg-red-900/10 border-red-200 dark:border-red-800'
-                                : 'bg-muted/50 border-border'
-                            }`}
-                          >
-                            <LinkIcon className="h-3 w-3 flex-shrink-0" />
-                            <span className="flex-1 truncate font-mono text-xs">{url}</span>
-                            {speedTestResults[url]?.status === 'testing' ? (
-                              <div className="flex items-center gap-1 text-muted-foreground">
-                                <div className="h-3 w-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                                <span>Testing...</span>
-                              </div>
-                            ) : speedTestResults[url]?.status === 'success' ? (
-                              <div className="flex items-center gap-1 text-green-600 dark:text-green-400">
-                                <CheckCircle className="h-3 w-3" />
-                                <span className="flex items-center gap-1">
-                                  <Clock className="h-3 w-3" />
-                                  {speedTestResults[url]?.responseTime}ms
-                                </span>
-                              </div>
-                            ) : speedTestResults[url]?.status === 'error' ? (
-                              <div className="flex items-center gap-1 text-red-600 dark:text-red-400">
-                                <AlertCircle className="h-3 w-3" />
-                                <span className="text-xs">{speedTestResults[url]?.error || 'Error'}</span>
-                              </div>
-                            ) : (
-                              <div className="flex items-center gap-1">
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  className="h-6 w-6 p-0"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    testUrlSpeed(url);
-                                  }}
-                                  disabled={testingUrls.has(url)}
-                                  title="Test Speed"
-                                >
-                                  <Gauge className="h-3 w-3" />
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  className="h-6 w-6 p-0 text-red-600 hover:text-red-700"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    removeUrl(domain.id, index);
-                                  }}
-                                  title="Remove URL"
-                                >
-                                  <Trash2 className="h-3 w-3" />
-                                </Button>
-                              </div>
-                            )}
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-3">
+                    {latest && (
+                      <div className="border rounded-md p-3 bg-muted/40">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-xs font-semibold">Latest Analysis ({latest.strategy})</span>
+                          <span className="text-[11px] text-muted-foreground">
+                            {latest.tested_at ? new Date(latest.tested_at).toLocaleString() : ""}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 text-xs">
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Performance</span>
+                            <span className="font-semibold">{formatScore(latest.performance_score)}</span>
                           </div>
-                        ))}
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Accessibility</span>
+                            <span className="font-semibold">{formatScore(latest.accessibility_score)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Best Practices</span>
+                            <span className="font-semibold">{formatScore(latest.best_practices_score)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">SEO</span>
+                            <span className="font-semibold">{formatScore(latest.seo_score)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">FCP</span>
+                            <span className="font-semibold">{formatMs(latest.first_contentful_paint)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Speed Index</span>
+                            <span className="font-semibold">{formatMs(latest.speed_index)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">TTI</span>
+                            <span className="font-semibold">{formatMs(latest.time_to_interactive)}</span>
+                          </div>
+                        </div>
                       </div>
                     )}
-                  </div>
 
-                  <div className="pt-2 border-t">
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      className="w-full"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        openAddUrlModal(domain.id);
-                      }}
+                    {/* Speed Test Results */}
+                    <div className="pt-2 border-t space-y-2">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs font-medium text-muted-foreground">
+                          Speed Test Results:
+                        </span>
+                      </div>
+
+                  {/* Main URL Test Result */}
+                  <div className="space-y-1">
+                    <div
+                      className={`flex items-center gap-2 p-2 rounded-md text-xs border ${
+                        speedTestResults[domain.uptime_url]?.status === 'success'
+                          ? 'bg-green-50 dark:bg-green-900/10 border-green-200 dark:border-green-800'
+                          : speedTestResults[domain.uptime_url]?.status === 'error'
+                          ? 'bg-red-50 dark:bg-red-900/10 border-red-200 dark:border-red-800'
+                          : 'bg-muted/50 border-border'
+                      }`}
                     >
-                      <Plus className="h-4 w-4 mr-2" />
-                      Add URL
-                    </Button>
+                      <Globe className="h-3 w-3 flex-shrink-0" />
+                      <span className="flex-1 truncate font-mono text-xs">
+                        {domain.uptime_url}
+                      </span>
+                      {speedTestResults[domain.uptime_url]?.status === 'testing' ? (
+                        <div className="flex items-center gap-1 text-muted-foreground">
+                          <div className="h-3 w-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                          <span>Testing...</span>
+                        </div>
+                      ) : speedTestResults[domain.uptime_url]?.status === 'success' ? (
+                        <div className="flex items-center gap-1 text-green-600 dark:text-green-400">
+                          <CheckCircle className="h-3 w-3" />
+                          <span className="flex items-center gap-1">
+                            <Clock className="h-3 w-3" />
+                            {speedTestResults[domain.uptime_url]?.responseTime}ms
+                          </span>
+                        </div>
+                      ) : speedTestResults[domain.uptime_url]?.status === 'error' ? (
+                        <div className="flex items-center gap-1 text-red-600 dark:text-red-400">
+                          <AlertCircle className="h-3 w-3" />
+                          <span className="text-xs">{speedTestResults[domain.uptime_url]?.error || 'Error'}</span>
+                        </div>
+                      ) : (
+                        // <Button
+                        //   variant="ghost"
+                        //   size="sm"
+                        //   className="h-6 text-xs"
+                        //   onClick={(e) => {
+                        //     e.stopPropagation();
+                        //     testUrlSpeed(domain.uptime_url);
+                        //   }}
+                        //   disabled={testingUrls.has(domain.uptime_url)}
+                        // >
+                        //   <Gauge className="h-3 w-3 mr-1" />
+                        //   Test
+                        // </Button>
+                        <></>
+                      )}
+                    </div>
                   </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      )}
 
+                  {/* Inner Pages Test Results */}
+                  {(domain.inner_pages || []).length > 0 && (
+                    <div className="space-y-1">
+                      {(domain.inner_pages || []).map((url, index) => (
+                        <div
+                          key={index}
+                          className={`flex items-center gap-2 p-2 rounded-md text-xs border ${
+                            speedTestResults[url]?.status === 'success'
+                              ? 'bg-green-50 dark:bg-green-900/10 border-green-200 dark:border-green-800'
+                              : speedTestResults[url]?.status === 'error'
+                              ? 'bg-red-50 dark:bg-red-900/10 border-red-200 dark:border-red-800'
+                              : 'bg-muted/50 border-border'
+                          }`}
+                        >
+                          <LinkIcon className="h-3 w-3 flex-shrink-0" />
+                          <span className="flex-1 truncate font-mono text-xs">{url}</span>
+                          {speedTestResults[url]?.status === 'testing' ? (
+                            <div className="flex items-center gap-1 text-muted-foreground">
+                              <div className="h-3 w-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                              <span>Testing...</span>
+                            </div>
+                          ) : speedTestResults[url]?.status === 'success' ? (
+                            <div className="flex items-center gap-1 text-green-600 dark:text-green-400">
+                              <CheckCircle className="h-3 w-3" />
+                              <span className="flex items-center gap-1">
+                                <Clock className="h-3 w-3" />
+                                {speedTestResults[url]?.responseTime}ms
+                              </span>
+                            </div>
+                          ) : speedTestResults[url]?.status === 'error' ? (
+                            <div className="flex items-center gap-1 text-red-600 dark:text-red-400">
+                              <AlertCircle className="h-3 w-3" />
+                              <span className="text-xs">{speedTestResults[url]?.error || 'Error'}</span>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1">
+                              {/* <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-6 w-6 p-0"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  testUrlSpeed(url);
+                                }}
+                                disabled={testingUrls.has(url)}
+                                title="Test Speed"
+                              >
+                                <Gauge className="h-3 w-3" />
+                              </Button> */}
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-6 w-6 p-0 text-red-600 hover:text-red-700"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  removeUrl(domain.id, index);
+                                }}
+                                title="Remove URL"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="pt-2 border-t">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="w-full"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openAddUrlModal(domain.id);
+                    }}
+                  >
+                    <Plus className="h-4 w-4 mr-2" />
+                    Add URL
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="w-full mt-2"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      router.push(`/speed-test/${domain.id}`);
+                    }}
+                  >
+                    <Gauge className="h-4 w-4 mr-2" />
+                    View Analysis
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        );
+      })}
+    </div>
+  )}
       {/* Add URL Modal */}
       {openModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
