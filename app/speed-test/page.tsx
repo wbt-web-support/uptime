@@ -32,6 +32,8 @@ export default function SpeedTestPage() {
   const [error, setError] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
+  const [performanceFilter, setPerformanceFilter] = useState<string>("all");
+  const [analysisDataFilter, setAnalysisDataFilter] = useState<string>("all");
   const [sortBy, setSortBy] = useState<"domain" | "newest" | "oldest" | "category">("domain");
   const [viewMode, setViewMode] = useState<"cards" | "table">("cards");
   const [openModal, setOpenModal] = useState<string | null>(null);
@@ -265,11 +267,92 @@ export default function SpeedTestPage() {
     }
   };
 
+  const waitForDomainResults = async (domain: Domain, maxWaitTime = 300000): Promise<{ success: boolean; message?: string }> => {
+    const urlsToTest = [domain.uptime_url, ...(domain.inner_pages || [])];
+    const strategies: Array<"mobile" | "desktop"> = ["mobile", "desktop"];
+    const totalExpectedResults = urlsToTest.length * strategies.length;
+    
+    const startTime = Date.now();
+    const pollInterval = 3000; // Check every 3 seconds
+    
+    while (Date.now() - startTime < maxWaitTime) {
+      try {
+        // Check all URLs and strategies for this domain
+        const { data: results, error } = await supabase
+          .from("pagespeed_results")
+          .select("url, strategy, performance_score")
+          .eq("domain_id", domain.id)
+          .in("strategy", strategies);
+        
+        if (error) {
+          console.error("Error checking results:", error);
+          await new Promise(resolve => setTimeout(resolve, pollInterval));
+          continue;
+        }
+        
+        // Count how many have valid results (performance_score >= 0)
+        const validResults = (results || []).filter(
+          r => r.performance_score !== null && r.performance_score !== undefined && r.performance_score >= 0
+        );
+        
+        // Check for errors (performance_score === -1)
+        const errorResults = (results || []).filter(
+          r => r.performance_score !== null && r.performance_score === -1
+        );
+        
+        // If we have all valid results, we're done
+        if (validResults.length === totalExpectedResults) {
+          return { success: true };
+        }
+        
+        // If we have all results (valid + errors), we're done (but with some errors)
+        if (validResults.length + errorResults.length === totalExpectedResults) {
+          if (errorResults.length > 0) {
+            return { 
+              success: true, 
+              message: `Completed with ${errorResults.length} error${errorResults.length > 1 ? 's' : ''}` 
+            };
+          }
+          return { success: true };
+        }
+        
+        // Still waiting for results
+        await new Promise(resolve => setTimeout(resolve, pollInterval));
+      } catch (err: any) {
+        console.error("Error polling for results:", err);
+        await new Promise(resolve => setTimeout(resolve, pollInterval));
+      }
+    }
+    
+    // Timeout
+    return { success: false, message: "Timeout waiting for results" };
+  };
+
   const analyzeSelectedDomains = async () => {
     if (selectedDomains.size === 0 || analyzingBatch) return;
     setAnalyzingBatch(true);
     setAnalysisLog([]);
     const targets = domains.filter((d) => selectedDomains.has(d.id));
+
+    // First, remove any existing PageSpeed data for the selected domains
+    try {
+      const targetIds = targets.map((d) => d.id);
+      if (targetIds.length > 0) {
+        const { error: deleteError } = await supabase
+          .from("pagespeed_results")
+          .delete()
+          .in("domain_id", targetIds);
+
+        if (deleteError) {
+          console.error("Error deleting existing PageSpeed results:", deleteError);
+          setError("Failed to clear previous PageSpeed data for selected domains.");
+        }
+      }
+    } catch (deleteException: any) {
+      console.error("Exception while deleting PageSpeed results:", deleteException);
+      setError(deleteException?.message || "Failed to clear previous PageSpeed data.");
+    }
+
     const concurrency = Math.min(5, targets.length || 1);
     let index = 0;
 
@@ -286,16 +369,17 @@ export default function SpeedTestPage() {
       ]);
       try {
         let attempt = 0;
-        let success = false;
+        let queueSuccess = false;
         let lastErrors: string[] = [];
 
-        while (attempt < 3 && !success) {
+        // Step 1: Queue the tests
+        while (attempt < 3 && !queueSuccess) {
           attempt += 1;
           try {
             const res = await startBackgroundTestsForDomain(domain);
-            success = res.success;
+            queueSuccess = res.success;
             lastErrors = res.errors;
-            if (!success && attempt < 3) {
+            if (!queueSuccess && attempt < 3) {
               await delay(2000);
             }
           } catch (err: any) {
@@ -304,30 +388,36 @@ export default function SpeedTestPage() {
               await delay(2000);
             }
           }
-
-          // If queueing succeeded, validate metrics that already exist; if missing required fields, treat as failure
-          if (success) {
-            const validation = await validateRequiredMetrics(domain.id);
-            if (validation.hasBadData) {
-              success = false;
-              lastErrors = [validation.message];
-              if (attempt < 3) {
-                await delay(2000);
-              }
-            }
-          }
         }
 
+        if (!queueSuccess) {
+          setAnalysisLog((prev) =>
+            prev.map((item) =>
+              item.domainId === domain.id
+                ? {
+                    ...item,
+                    status: "error",
+                    finishedAt: Date.now(),
+                    message: `Failed to queue tests after ${attempt} attempt${attempt > 1 ? "s" : ""}: ${lastErrors.join("; ")}`,
+                  }
+                : item
+            )
+          );
+          await runNext();
+          return;
+        }
+
+        // Step 2: Wait for actual results
+        const waitResult = await waitForDomainResults(domain);
+        
         setAnalysisLog((prev) =>
           prev.map((item) =>
             item.domainId === domain.id
               ? {
                   ...item,
-                  status: success ? "done" : "error",
+                  status: waitResult.success ? "done" : "error",
                   finishedAt: Date.now(),
-                  message: success
-                    ? undefined
-                    : `Failed after ${attempt} attempt${attempt > 1 ? "s" : ""}: ${lastErrors.join("; ")}`,
+                  message: waitResult.message,
                 }
               : item
           )
@@ -416,7 +506,32 @@ export default function SpeedTestPage() {
         categoryFilter === 'all' || 
         domain.category === categoryFilter;
       
-      return matchesSearch && matchesCategory;
+      // Performance score filter
+      const latest = latestResults[domain.id];
+      const performanceScore = latest?.performance_score;
+      const matchesPerformance = (() => {
+        if (performanceFilter === 'all') return true;
+        // Only filter by score if we have valid data
+        if (performanceScore === null || performanceScore === undefined || performanceScore < 0) return false;
+        if (performanceFilter === 'low') return performanceScore < 50;
+        if (performanceFilter === 'medium') return performanceScore >= 50 && performanceScore < 90;
+        if (performanceFilter === 'high') return performanceScore >= 90;
+        return true;
+      })();
+      
+      // Analysis data filter
+      const matchesAnalysisData = (() => {
+        if (analysisDataFilter === 'all') return true;
+        if (analysisDataFilter === 'with_data') {
+          return latest && latest.performance_score !== null && latest.performance_score !== undefined && latest.performance_score >= 0;
+        }
+        if (analysisDataFilter === 'without_data') {
+          return !latest || latest.performance_score === null || latest.performance_score === undefined || latest.performance_score < 0;
+        }
+        return true;
+      })();
+      
+      return matchesSearch && matchesCategory && matchesPerformance && matchesAnalysisData;
     })
     .sort((a, b) => {
       switch(sortBy) {
@@ -454,6 +569,10 @@ export default function SpeedTestPage() {
     if (value < 0) return "Error";
     return `${value}`;
   };
+
+  // Helpers to interpret latest PageSpeed result status
+  const isResultRunning = (row: any) => !!row && row.performance_score === null;
+  const isResultError = (row: any) => !!row && row.performance_score !== null && row.performance_score < 0;
 
   const parseUrls = (urlString: string): string[] => {
     // Split by newlines, commas, or spaces, then filter and trim
@@ -863,6 +982,27 @@ export default function SpeedTestPage() {
               ))}
             </SelectContent>
           </Select>
+          <Select value={performanceFilter} onValueChange={setPerformanceFilter}>
+            <SelectTrigger className="w-full lg:w-[200px]">
+              <SelectValue placeholder="Performance Score" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Performance</SelectItem>
+              <SelectItem value="high">High</SelectItem>
+              <SelectItem value="medium">Medium</SelectItem>
+              <SelectItem value="low">Low</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={analysisDataFilter} onValueChange={setAnalysisDataFilter}>
+            <SelectTrigger className="w-full lg:w-[200px]">
+              <SelectValue placeholder="Analysis Data" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Domains</SelectItem>
+              <SelectItem value="with_data">With Analysis Data</SelectItem>
+              <SelectItem value="without_data">Without Analysis Data</SelectItem>
+            </SelectContent>
+          </Select>
           <Select value={sortBy} onValueChange={(value) => setSortBy(value as any)}>
             <SelectTrigger className="w-full lg:w-[200px]">
               <SelectValue placeholder="Sort by" />
@@ -938,8 +1078,8 @@ export default function SpeedTestPage() {
 
       {analysisLog.length > 0 && analyzingBatch && (
         <Card className="mb-4">
-          <CardContent className="pt-4">
-            <div className="flex items-center justify-between mb-2">
+          <CardContent className="pt-4 h-[600px] flex flex-col">
+            <div className="flex items-center justify-between mb-2 flex-shrink-0">
               <span className="text-sm font-semibold">Batch Analysis Status</span>
               {analyzingBatch && (
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -948,7 +1088,7 @@ export default function SpeedTestPage() {
                 </div>
               )}
             </div>
-            <div className="space-y-2">
+            <div className="space-y-2 overflow-y-auto flex-1">
               {[...analysisLog]
                 .sort((a, b) => (b.finishedAt || 0) - (a.finishedAt || 0))
                 .map((item) => (
@@ -1075,13 +1215,48 @@ export default function SpeedTestPage() {
                     </td>
                     <td className="px-4 py-2 border-b text-xs">{domain.category || "-"}</td>
                     <td className="px-4 py-2 border-b text-xs">{domain.tag || "-"}</td>
-                    <td className="px-4 py-2 border-b">{formatScore(latest?.performance_score)}</td>
-                    <td className="px-4 py-2 border-b">{formatScore(latest?.accessibility_score)}</td>
-                    <td className="px-4 py-2 border-b">{formatScore(latest?.best_practices_score)}</td>
-                    <td className="px-4 py-2 border-b">{formatScore(latest?.seo_score)}</td>
-                    <td className="px-4 py-2 border-b">{formatMs(latest?.first_contentful_paint)}</td>
-                    <td className="px-4 py-2 border-b">{formatMs(latest?.speed_index)}</td>
-                    <td className="px-4 py-2 border-b">{formatMs(latest?.time_to_interactive)}</td>
+                    <td className="px-4 py-2 border-b">
+                      {isResultRunning(latest) ? (
+                        <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                          <div className="h-3 w-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                          <span>Running…</span>
+                        </div>
+                      ) : isResultError(latest) ? (
+                        <span className="text-xs text-red-600 dark:text-red-400">Error</span>
+                      ) : (
+                        formatScore(latest?.performance_score)
+                      )}
+                    </td>
+                    <td className="px-4 py-2 border-b">
+                      {isResultRunning(latest) || isResultError(latest)
+                        ? "—"
+                        : formatScore(latest?.accessibility_score)}
+                    </td>
+                    <td className="px-4 py-2 border-b">
+                      {isResultRunning(latest) || isResultError(latest)
+                        ? "—"
+                        : formatScore(latest?.best_practices_score)}
+                    </td>
+                    <td className="px-4 py-2 border-b">
+                      {isResultRunning(latest) || isResultError(latest)
+                        ? "—"
+                        : formatScore(latest?.seo_score)}
+                    </td>
+                    <td className="px-4 py-2 border-b">
+                      {isResultRunning(latest) || isResultError(latest)
+                        ? "—"
+                        : formatMs(latest?.first_contentful_paint)}
+                    </td>
+                    <td className="px-4 py-2 border-b">
+                      {isResultRunning(latest) || isResultError(latest)
+                        ? "—"
+                        : formatMs(latest?.speed_index)}
+                    </td>
+                    <td className="px-4 py-2 border-b">
+                      {isResultRunning(latest) || isResultError(latest)
+                        ? "—"
+                        : formatMs(latest?.time_to_interactive)}
+                    </td>
                     <td className="px-4 py-2 border-b">
                       <Button
                         variant="outline"
@@ -1093,6 +1268,20 @@ export default function SpeedTestPage() {
                       >
                         View
                       </Button>
+                      {isResultError(latest) && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="ml-2 text-xs"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            startBackgroundTestsForDomain(domain);
+                          }}
+                        >
+                          <RefreshCw className="h-3 w-3 mr-1" />
+                          Re-analyze
+                        </Button>
+                      )}
                     </td>
                   </tr>
                 );
