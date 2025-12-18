@@ -16,6 +16,13 @@ interface DashboardHeaderProps {
   filteredCount: number;
   isAdmin?: boolean;
   rightContent?: ReactNode;
+  stats?: {
+    total: number;
+    up: number;
+    down: number;
+    sslExpiring: number;
+    domainExpiring: number;
+  };
 }
 
 export default function DashboardHeader({
@@ -31,14 +38,15 @@ export default function DashboardHeader({
   totalCount,
   filteredCount,
   isAdmin = false,
-  rightContent
+  rightContent,
+  stats
 }: DashboardHeaderProps) {
   const filters = [
-    { id: 'all', name: 'All', color: 'bg-brand' },
-    { id: 'up', name: 'Operational', color: 'bg-green-500' },
-    { id: 'down', name: 'Down', color: 'bg-red-500' },
-    { id: 'ssl-expiring', name: 'SSL Expiring', color: 'bg-amber-500' },
-    { id: 'domain-expiring', name: 'Domain Expiring', color: 'bg-orange-500' }
+    { id: 'all', name: 'All', color: 'bg-brand', count: stats?.total },
+    { id: 'up', name: 'Operational', color: 'bg-green-500', count: stats?.up },
+    { id: 'down', name: 'Down', color: 'bg-red-500', count: stats?.down },
+    { id: 'ssl-expiring', name: 'SSL Expiring', color: 'bg-amber-500', count: stats?.sslExpiring },
+    { id: 'domain-expiring', name: 'Domain Expiring', color: 'bg-orange-500', count: stats?.domainExpiring }
   ];
 
   return (
@@ -110,6 +118,13 @@ export default function DashboardHeader({
               }`}
             >
               {filter.name}
+              {filter.count !== undefined && (
+                <span className={`ml-2 inline-flex items-center justify-center px-1.5 py-0.5 rounded-full text-xs font-semibold ${
+                  statusFilter === filter.id ? 'bg-white/20 text-white' : 'bg-background/50 text-muted-foreground'
+                }`}>
+                  {filter.count}
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -140,4 +155,4 @@ export default function DashboardHeader({
       )}
     </div>
   );
-} 
+}

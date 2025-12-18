@@ -96,10 +96,30 @@ export default function DomainForm({ onSuccess, onSave }: DomainFormProps) {
 
   return (
     <div id="add-domain-form" className="card mb-8">
-      <div className="card-header">
+      <div className="card-header flex flex-row justify-between ">
+        <div>
         <h2 className="card-title">Add New Domain</h2>
         <p className="card-description">Add a new domain to monitor its uptime, SSL certificate, and expiry date</p>
+        </div>
+        <div>
+        <div className="flex ">
+          <button
+            type="submit"
+            disabled={loading}
+            className="btn-brand"
+          >
+            {loading ? (
+              <>
+                <LoadingSpinner size="sm" />
+                <span>Processing...</span>
+              </>
+            ) : "Add Domain"}
+          </button>
+        </div>
+        </div>
       </div>
+
+     
       
       {error && (
         <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-md text-red-600 dark:bg-red-900/20 dark:border-red-800 dark:text-red-400">
@@ -113,7 +133,7 @@ export default function DomainForm({ onSuccess, onSave }: DomainFormProps) {
         </div>
       )}
       
-      <form onSubmit={addDomain} className="mt-6 space-y-4">
+      <form onSubmit={addDomain} className="mt-2 space-y-4">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <div>
             <label htmlFor="domain_name" className="block text-sm font-medium text-foreground mb-1">
@@ -203,20 +223,7 @@ export default function DomainForm({ onSuccess, onSave }: DomainFormProps) {
           </div>
         </div>
         
-        <div className="flex justify-end">
-          <button
-            type="submit"
-            disabled={loading}
-            className="btn-brand"
-          >
-            {loading ? (
-              <>
-                <LoadingSpinner size="sm" />
-                <span>Processing...</span>
-              </>
-            ) : "Add Domain"}
-          </button>
-        </div>
+       
       </form>
     </div>
   );

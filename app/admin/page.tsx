@@ -474,6 +474,15 @@ export default function AdminPanel() {
     }
   };
 
+  // Calculate stats for DashboardHeader
+  const stats = {
+    total: domains.length,
+    up: domains.filter(d => d.uptime?.status === true).length,
+    down: domains.filter(d => d.uptime?.status === false).length,
+    sslExpiring: domains.filter(d => d.ssl?.days_remaining !== undefined && d.ssl.days_remaining <= 15).length,
+    domainExpiring: domains.filter(d => d.domain_expiry?.days_remaining !== undefined && d.domain_expiry.days_remaining <= 30).length
+  };
+
   return (
     <div className="container mx-auto py-8 px-4">
       <DashboardHeader
@@ -488,6 +497,7 @@ export default function AdminPanel() {
         categories={categories}
         totalCount={domains.length}
         filteredCount={filteredDomains.length}
+        stats={stats}
         rightContent={
           <div className="flex items-center gap-4">
             <Select 
@@ -509,7 +519,7 @@ export default function AdminPanel() {
       />
      
 
-      {domains.length > 0 && <StatsOverview domains={domains} />}
+      {/* {domains.length > 0 && <StatsOverview domains={domains} />} */}
 
       {error && (
         <div className="card border-red-300 mb-6 bg-red-50 dark:bg-red-900/10">
