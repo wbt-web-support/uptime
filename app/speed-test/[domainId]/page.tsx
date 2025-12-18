@@ -43,6 +43,7 @@ export default function SpeedTestAnalysisPage() {
   
   const [domain, setDomain] = useState<Domain | null>(null);
   const [loading, setLoading] = useState(true);
+  const [authChecked, setAuthChecked] = useState(false);
   const [error, setError] = useState("");
   const [strategy, setStrategy] = useState<'mobile' | 'desktop'>('mobile');
   // Store results with composite key: `${url}-${strategy}`
@@ -55,6 +56,22 @@ export default function SpeedTestAnalysisPage() {
 
   const supabase = createClient();
 
+  // Gate access: redirect unauthenticated users to login
+  useEffect(() => {
+    const ensureAuth = async () => {
+      const { data, error } = await supabase.auth.getSession();
+      if (error) {
+        console.error("Auth check failed:", error);
+      }
+      if (!data?.session) {
+        router.push("/login");
+        return;
+      }
+      setAuthChecked(true);
+    };
+    ensureAuth();
+  }, [supabase, router]);
+
   // Helper function to normalize URLs (must be defined before use)
   const normalizeUrl = (url: string): string => {
     let normalized = url.trim();
@@ -65,8 +82,10 @@ export default function SpeedTestAnalysisPage() {
   };
 
   useEffect(() => {
-    fetchDomain();
-  }, [domainId]);
+    if (authChecked) {
+      fetchDomain();
+    }
+  }, [authChecked, domainId]);
 
   useEffect(() => {
     if (domain) {

@@ -2,19 +2,15 @@
 
 import { useEffect, useState } from "react";
 import { createClient } from "@/utils/supabase/client";
-import { useRouter } from "next/navigation";
+import { useRouter, useParams } from "next/navigation";
 import Link from "next/link";
 import { ChevronLeft, Globe, Tag, LinkIcon, Activity, ShieldCheck, Clock, CheckCircle, AlertTriangle, Server, ListFilter, Plus, X } from "lucide-react";
 import LoadingSpinner from "@/components/LoadingSpinner";
 
-interface EditDomainProps {
-  params: {
-    id: string;
-  };
-}
-
-export default function EditDomain({ params }: EditDomainProps) {
+export default function EditDomain() {
   const router = useRouter();
+  const params = useParams<{ id: string }>();
+  const domainId = params?.id;
   const supabase = createClient();
   const [loading, setLoading] = useState(true);
   const [submitLoading, setSubmitLoading] = useState(false);
@@ -45,6 +41,8 @@ export default function EditDomain({ params }: EditDomainProps) {
   const [categoryLoading, setCategoryLoading] = useState(false);
 
   useEffect(() => {
+    if (!domainId) return;
+
     // Load categories from localStorage
     const savedCategories = localStorage.getItem('domain_categories');
     if (savedCategories) {
@@ -64,7 +62,7 @@ export default function EditDomain({ params }: EditDomainProps) {
         const { data, error } = await supabase
           .from("domains")
           .select("*")
-          .eq("id", params.id)
+          .eq("id", domainId)
           .single();
         
         if (error) throw error;
@@ -88,7 +86,7 @@ export default function EditDomain({ params }: EditDomainProps) {
     };
 
     fetchDomain();
-  }, [params.id]);
+  }, [domainId]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
@@ -166,7 +164,7 @@ export default function EditDomain({ params }: EditDomainProps) {
           uptime_url: formData.uptime_url,
           category: formData.category,
         })
-        .eq("id", params.id);
+        .eq("id", domainId);
 
       if (error) throw error;
       

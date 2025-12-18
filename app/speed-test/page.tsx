@@ -27,6 +27,7 @@ interface Domain {
 export default function SpeedTestPage() {
   const [domains, setDomains] = useState<Domain[]>([]);
   const [loading, setLoading] = useState(true);
+  const [authChecked, setAuthChecked] = useState(false);
   const [loadingResults, setLoadingResults] = useState(false);
   const [error, setError] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
@@ -65,6 +66,22 @@ export default function SpeedTestPage() {
 
   const supabase = createClient();
   const router = useRouter();
+
+  // Gate access: redirect unauthenticated users to login
+  useEffect(() => {
+    const ensureAuth = async () => {
+      const { data, error } = await supabase.auth.getSession();
+      if (error) {
+        console.error("Auth check failed:", error);
+      }
+      if (!data?.session) {
+        router.push("/login");
+        return;
+      }
+      setAuthChecked(true);
+    };
+    ensureAuth();
+  }, [supabase, router]);
 
   const fetchDomains = async () => {
     setLoading(true);
@@ -377,8 +394,10 @@ export default function SpeedTestPage() {
   };
 
   useEffect(() => {
-    fetchDomains();
-  }, []);
+    if (authChecked) {
+      fetchDomains();
+    }
+  }, [authChecked]);
 
   // Get all unique categories from domains
   const categories = ["all", ...Array.from(new Set(domains
