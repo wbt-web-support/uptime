@@ -187,7 +187,9 @@ export default function PublicDashboard() {
   const filteredDomains = domains.filter(domain => {
     const matchesSearch = 
       domain.domain_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (domain.display_name && domain.display_name.toLowerCase().includes(searchQuery.toLowerCase()));
+      searchQuery.toLowerCase().includes(domain.domain_name.toLowerCase()) ||
+      (domain.display_name && domain.display_name.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (domain.uptime_url && domain.uptime_url.toLowerCase().includes(searchQuery.toLowerCase()));
     
     const matchesStatus = 
       statusFilter === 'all' || 
