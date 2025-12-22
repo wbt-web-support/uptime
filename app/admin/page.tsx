@@ -9,7 +9,7 @@ import DashboardHeader from "@/components/DashboardHeader";
 import StatsOverview from "@/components/StatsOverview";
 import DomainActions from "@/components/DomainActions";
 import LoadingSpinner from "@/components/LoadingSpinner";
-import { AlertTriangle, Clock, CheckCircle, RefreshCw, Activity, Shield, Globe, Server, ExternalLink, Trash2, ArrowUp, ArrowDown, ChevronsUpDown, ChevronLeft, ChevronRight } from "lucide-react";
+import { AlertTriangle, Clock, CheckCircle, RefreshCw, Activity, Shield, Globe, Server, ExternalLink, Trash2, ArrowUp, ArrowDown, ChevronsUpDown, ChevronLeft, ChevronRight, X } from "lucide-react";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 
 export default function AdminPanel() {
@@ -465,6 +465,11 @@ export default function AdminPanel() {
       
       setSuccess(`Category updated to "${selectedCategory}" for ${selectedDomains.length} ${selectedDomains.length === 1 ? 'domain' : 'domains'}!`);
       setTimeout(() => setSuccess(""), 3000);
+      
+      // Auto-unselect after update
+      setSelectedDomains([]);
+      setSelectAll(false);
+      
       fetchDomains(); // Refresh data
     } catch (error: any) {
       setError(error.message);
@@ -573,6 +578,15 @@ export default function AdminPanel() {
               </button>
             </div>
             <div className="flex items-center gap-2">
+              <button 
+                onClick={() => { setSelectedDomains([]); setSelectAll(false); }}
+                className="btn btn-secondary flex items-center gap-2"
+                disabled={loading}
+                title="Unselect all"
+              >
+                <X size={16} />
+                Unselect
+              </button>
               <button 
                 onClick={checkSelectedDomains}
                 className="btn btn-secondary flex items-center gap-2"

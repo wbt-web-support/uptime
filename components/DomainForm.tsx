@@ -105,6 +105,7 @@ export default function DomainForm({ onSuccess, onSave }: DomainFormProps) {
         <div className="flex ">
           <button
             type="submit"
+            form="domain-form"
             disabled={loading}
             className="btn-brand"
           >
@@ -133,7 +134,7 @@ export default function DomainForm({ onSuccess, onSave }: DomainFormProps) {
         </div>
       )}
       
-      <form onSubmit={addDomain} className="mt-2 space-y-4">
+      <form id="domain-form" onSubmit={addDomain} className="mt-2 space-y-4">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <div>
             <label htmlFor="domain_name" className="block text-sm font-medium text-foreground mb-1">
