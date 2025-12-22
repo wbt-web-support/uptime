@@ -452,6 +452,20 @@ export default function SpeedTestPage() {
     }
 
     setAddingDomain(true);
+    
+    // Check for duplicates in local state first to avoid unnecessary API calls
+    const duplicate = domains.find(
+      (d) => 
+        d.domain_name.toLowerCase() === domain_name.trim().toLowerCase() || 
+        d.uptime_url === normalizedUptime
+    );
+
+    if (duplicate) {
+      setAddDomainError("Domain with this name or URL already exists.");
+      setAddingDomain(false);
+      return;
+    }
+
     try {
       const { error: insertError } = await supabase.from("domains").insert({
         domain_name: domain_name.trim(),

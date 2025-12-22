@@ -45,6 +45,21 @@ export default function DomainForm({ onSuccess, onSave }: DomainFormProps) {
 
     try {
       setLoading(true);
+
+      // Check for duplicates
+      const { data: existingDomains, error: checkError } = await supabase
+        .from("domains")
+        .select("id")
+        .or(`domain_name.eq.${formData.domain_name},uptime_url.eq.${formData.uptime_url}`);
+
+      if (checkError) throw checkError;
+
+      if (existingDomains && existingDomains.length > 0) {
+        setError("Domain with this name or URL already exists");
+        setLoading(false);
+        return;
+      }
+
       const { data, error } = await supabase.from("domains").insert([
         {
           domain_name: formData.domain_name,
@@ -217,8 +232,8 @@ export default function DomainForm({ onSuccess, onSave }: DomainFormProps) {
                 <option value="Live Website Temporary Suspended">Live Website Temporary Suspended</option>
                 <option value="Migration Done">Migration Done</option>
                 <option value="Migration Pending">Migration Pending</option>
-                <option value="Draft Website">Draft Website</option>
-                <option value="Draft Suspended Website">Draft Suspended Website</option>
+                {/* <option value="Draft Website">Draft Website</option>
+                <option value="Draft Suspended Website">Draft Suspended Website</option> */}
               </select>
             </div>
           </div>
