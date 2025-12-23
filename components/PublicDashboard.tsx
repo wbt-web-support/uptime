@@ -102,13 +102,13 @@ export default function PublicDashboard() {
 
       // Get latest uptime status for each domain
       const domainIds = domainsData.map(domain => domain.id);
-      
+
       const { data: uptimeData, error: uptimeError } = await supabase
         .from('uptime_logs')
         .select('*')
         .in('domain_id', domainIds)
         .order('checked_at', { ascending: false });
-      
+
       if (uptimeError) throw uptimeError;
 
       // Get latest SSL info for each domain
@@ -117,7 +117,7 @@ export default function PublicDashboard() {
         .select('*')
         .in('domain_id', domainIds)
         .order('checked_at', { ascending: false });
-      
+
       if (sslError) throw sslError;
 
       // Get latest domain expiry info for each domain
@@ -126,7 +126,7 @@ export default function PublicDashboard() {
         .select('*')
         .in('domain_id', domainIds)
         .order('checked_at', { ascending: false });
-      
+
       if (expiryError) throw expiryError;
 
       // Get latest IP records for each domain
@@ -135,7 +135,7 @@ export default function PublicDashboard() {
         .select('*')
         .in('domain_id', domainIds)
         .order('checked_at', { ascending: false });
-      
+
       if (ipError) throw ipError;
 
       // Combine all data
@@ -169,10 +169,10 @@ export default function PublicDashboard() {
 
   useEffect(() => {
     fetchDomains();
-    
+
     // Set up polling every 30 seconds
     const intervalId = setInterval(fetchDomains, 30000);
-    
+
     // Clean up interval on component unmount
     return () => clearInterval(intervalId);
   }, []);
@@ -185,26 +185,26 @@ export default function PublicDashboard() {
 
   // Filter and sort domains based on search query, status filter, and sort choice
   const filteredDomains = domains.filter(domain => {
-    const matchesSearch = 
+    const matchesSearch =
       domain.domain_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       searchQuery.toLowerCase().includes(domain.domain_name.toLowerCase()) ||
       (domain.display_name && domain.display_name.toLowerCase().includes(searchQuery.toLowerCase())) ||
       (domain.uptime_url && domain.uptime_url.toLowerCase().includes(searchQuery.toLowerCase()));
-    
-    const matchesStatus = 
-      statusFilter === 'all' || 
+
+    const matchesStatus =
+      statusFilter === 'all' ||
       (statusFilter === 'up' && domain.uptime?.status === true) ||
       (statusFilter === 'down' && domain.uptime?.status === false) ||
       (statusFilter === 'ssl-expiring' && (domain.ssl?.days_remaining ?? 999) <= 15) ||
       (statusFilter === 'domain-expiring' && (domain.domain_expiry?.days_remaining ?? 999) <= 30);
-    
-    const matchesCategory = 
-      categoryFilter === 'all' || 
+
+    const matchesCategory =
+      categoryFilter === 'all' ||
       domain.category === categoryFilter;
-    
+
     return matchesSearch && matchesStatus && matchesCategory;
   }).sort((a, b) => {
-    switch(sortBy) {
+    switch (sortBy) {
       case "newest":
         return new Date(b.uptime?.checked_at || 0).getTime() - new Date(a.uptime?.checked_at || 0).getTime();
       case "oldest":
@@ -234,20 +234,31 @@ export default function PublicDashboard() {
     domainExpiring: domains.filter(d => d.domain_expiry?.days_remaining !== undefined && d.domain_expiry.days_remaining <= 30).length
   };
 
+  // Calculate category counts
+  const categoryStats: Record<string, number> = {
+    all: domains.length
+  };
+
+  domains.forEach(domain => {
+    if (domain.category) {
+      categoryStats[domain.category] = (categoryStats[domain.category] || 0) + 1;
+    }
+  });
+
   return (
     <div className="container mx-auto py-0 px-0">
       <div className="flex justify-between items-center mb-6">
         <div className="flex items-center gap-4">
           <h1 className="text-3xl font-bold">Domain Status</h1>
           <div className="flex items-center gap-2 bg-muted rounded-md p-1">
-            <button 
+            <button
               onClick={() => setViewMode("grid")}
               className={`p-1.5 rounded-md ${viewMode === "grid" ? "bg-background shadow-sm" : "hover:bg-background/50"}`}
               aria-label="Grid view"
             >
               <Grid size={16} />
             </button>
-            <button 
+            <button
               onClick={() => setViewMode("list")}
               className={`p-1.5 rounded-md ${viewMode === "list" ? "bg-background shadow-sm" : "hover:bg-background/50"}`}
               aria-label="List view"
@@ -258,8 +269,8 @@ export default function PublicDashboard() {
         </div>
 
         <div className="flex items-center gap-2">
-          <Select 
-            value={sortBy} 
+          <Select
+            value={sortBy}
             onValueChange={(value) => setSortBy(value as any)}
           >
             <SelectTrigger className="w-[180px]">
@@ -274,7 +285,7 @@ export default function PublicDashboard() {
           </Select>
         </div>
       </div>
-      
+
       <DashboardHeader
         title=""
         description="Monitor the status of domains, SSL certificates, and domain expiry dates"
@@ -288,6 +299,7 @@ export default function PublicDashboard() {
         totalCount={domains.length}
         filteredCount={filteredDomains.length}
         stats={stats}
+        categoryStats={categoryStats}
       />
 
       {/* {domains.length > 0 && <StatsOverview domains={domains} />} */}
@@ -340,10 +352,10 @@ export default function PublicDashboard() {
                     <td className="px-4 py-4">
                       <div>
                         <div className="font-medium text-base">{domain.display_name || domain.domain_name}</div>
-                        <a 
-                          href={domain.uptime_url} 
-                          target="_blank" 
-                          rel="noopener noreferrer" 
+                        <a
+                          href={domain.uptime_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
                           className="text-xs text-muted-foreground hover:text-brand flex items-center gap-1 mt-1"
                         >
                           <Globe size={14} />
@@ -374,7 +386,7 @@ export default function PublicDashboard() {
                       <div className="flex items-center gap-2">
                         <Clock className="text-brand h-4 w-4" />
                         <span className="text-sm">
-                          {!domain.uptime?.checked_at ? "Never" : 
+                          {!domain.uptime?.checked_at ? "Never" :
                             formatTimeAgo(domain.uptime.checked_at)}
                         </span>
                       </div>
@@ -465,7 +477,7 @@ export default function PublicDashboard() {
                       </div>
                     </td>
                     <td className="px-4 py-4 text-right">
-                      <a 
+                      <a
                         href={`/domain/${domain.domain_name}`}
                         className="btn-outline text-xs py-1.5"
                       >

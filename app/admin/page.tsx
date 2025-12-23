@@ -34,6 +34,7 @@ export default function AdminPanel() {
   const [checkingDomain, setCheckingDomain] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(25);
+  const [showAddForm, setShowAddForm] = useState(false);
   const supabase = createClient();
 
   const fetchDomains = async () => {
@@ -70,9 +71,9 @@ export default function AdminPanel() {
     setLoading(true);
     try {
       const { error } = await supabase.from("domains").delete().eq("id", id);
-      
+
       if (error) throw error;
-      
+
       setSuccess("Domain deleted successfully!");
       fetchDomains();
     } catch (error: any) {
@@ -80,7 +81,7 @@ export default function AdminPanel() {
       setLoading(false);
     }
   };
-  
+
   const saveCheckInterval = async () => {
     // In a production app, you might save this to a settings table in Supabase
     setSuccess(`Monitoring interval set to ${checkInterval}`);
@@ -88,14 +89,14 @@ export default function AdminPanel() {
 
   const checkAllDomains = async () => {
     if (domains.length === 0) return;
-    
+
     setCheckingAll(true);
     setSuccess(""); // Clear any previous messages
     setError("");
-    
+
     let successes = 0;
     let failures = 0;
-    
+
     try {
       // Process each domain
       for (const domain of domains) {
@@ -106,45 +107,45 @@ export default function AdminPanel() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ domainId: domain.id, url: domain.uptime_url })
           });
-          
+
           // Check SSL
           await fetch('/api/check/ssl', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ domainId: domain.id, domain: domain.domain_name })
           });
-          
+
           // Check domain expiry
           await fetch('/api/check/whois', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ domainId: domain.id, domain: domain.domain_name })
           });
-          
+
           // Check IP records
           await fetch('/api/check/ip', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ domainId: domain.id, domain: domain.domain_name })
           });
-          
+
           successes++;
         } catch (err) {
           failures++;
           console.error(`Error checking domain ${domain.domain_name}:`, err);
         }
       }
-      
+
       // Update stats and fetch fresh data
       setCheckResults({
         successes,
         failures,
         total: domains.length
       });
-      
+
       setSuccess(`Domain checks completed: ${successes} successful, ${failures} failed`);
       fetchDomains(); // Refresh data
-      
+
     } catch (err: any) {
       setError("Error during batch domain check: " + err.message);
     } finally {
@@ -207,84 +208,84 @@ export default function AdminPanel() {
   // Filter and sort domains with memoization for performance
   const filteredDomains = useMemo(() => {
     return domains.filter(domain => {
-      const matchesSearch = 
+      const matchesSearch =
         domain.domain_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         searchQuery.toLowerCase().includes(domain.domain_name.toLowerCase()) ||
         (domain.display_name && domain.display_name.toLowerCase().includes(searchQuery.toLowerCase())) ||
         (domain.uptime_url && domain.uptime_url.toLowerCase().includes(searchQuery.toLowerCase()));
-      
-      const matchesStatus = 
-        statusFilter === 'all' || 
+
+      const matchesStatus =
+        statusFilter === 'all' ||
         (statusFilter === 'up' && domain.uptime?.status === true) ||
         (statusFilter === 'down' && domain.uptime?.status === false) ||
         (statusFilter === 'ssl-expiring' && (domain.ssl?.days_remaining ?? 999) <= 30) ||
         (statusFilter === 'domain-expiring' && (domain.domain_expiry?.days_remaining ?? 999) <= 30);
-      
-      const matchesCategory = 
-        categoryFilter === 'all' || 
+
+      const matchesCategory =
+        categoryFilter === 'all' ||
         domain.category === categoryFilter;
-      
+
       return matchesSearch && matchesStatus && matchesCategory;
     }).sort((a, b) => {
-    switch(sortBy) {
-      case "newest":
-        return new Date(b.uptime?.checked_at || 0).getTime() - new Date(a.uptime?.checked_at || 0).getTime();
-      case "oldest":
-        return new Date(a.uptime?.checked_at || 0).getTime() - new Date(b.uptime?.checked_at || 0).getTime();
-      case "domain":
-        return (a.display_name || a.domain_name).localeCompare(b.display_name || b.domain_name);
-      case "status-asc":
-        // Sort by status (up first, then down, then unknown)
-        const aStatusAsc = a.uptime?.status;
-        const bStatusAsc = b.uptime?.status;
-        if (aStatusAsc === bStatusAsc) return 0;
-        if (aStatusAsc === true) return -1;
-        if (bStatusAsc === true) return 1;
-        if (aStatusAsc === false) return -1;
-        return 1;
-      case "status-desc":
-        // Sort by status (unknown first, then down, then up)
-        const aStatusDesc = a.uptime?.status;
-        const bStatusDesc = b.uptime?.status;
-        if (aStatusDesc === bStatusDesc) return 0;
-        if (aStatusDesc === undefined || aStatusDesc === null) return -1;
-        if (bStatusDesc === undefined || bStatusDesc === null) return 1;
-        if (aStatusDesc === false) return -1;
-        if (bStatusDesc === false) return 1;
-        return 1;
-      case "category-asc":
-        // Sort by category alphabetically (ascending)
-        const aCategoryAsc = (a.category || "").toLowerCase();
-        const bCategoryAsc = (b.category || "").toLowerCase();
-        return aCategoryAsc.localeCompare(bCategoryAsc);
-      case "category-desc":
-        // Sort by category alphabetically (descending)
-        const aCategoryDesc = (a.category || "").toLowerCase();
-        const bCategoryDesc = (b.category || "").toLowerCase();
-        return bCategoryDesc.localeCompare(aCategoryDesc);
-      case "ssl-asc":
-        // Sort SSL by days remaining (ascending - lowest first)
-        const aSslDays = a.ssl?.days_remaining ?? 999;
-        const bSslDays = b.ssl?.days_remaining ?? 999;
-        return aSslDays - bSslDays;
-      case "ssl-desc":
-        // Sort SSL by days remaining (descending - highest first)
-        const aSslDaysDesc = a.ssl?.days_remaining ?? 999;
-        const bSslDaysDesc = b.ssl?.days_remaining ?? 999;
-        return bSslDaysDesc - aSslDaysDesc;
-      case "expiry-asc":
-        // Sort Domain Expiry by days remaining (ascending - lowest first)
-        const aExpiryDays = a.domain_expiry?.days_remaining ?? 999;
-        const bExpiryDays = b.domain_expiry?.days_remaining ?? 999;
-        return aExpiryDays - bExpiryDays;
-      case "expiry-desc":
-        // Sort Domain Expiry by days remaining (descending - highest first)
-        const aExpiryDaysDesc = a.domain_expiry?.days_remaining ?? 999;
-        const bExpiryDaysDesc = b.domain_expiry?.days_remaining ?? 999;
-        return bExpiryDaysDesc - aExpiryDaysDesc;
-      default:
-        return 0;
-    }
+      switch (sortBy) {
+        case "newest":
+          return new Date(b.uptime?.checked_at || 0).getTime() - new Date(a.uptime?.checked_at || 0).getTime();
+        case "oldest":
+          return new Date(a.uptime?.checked_at || 0).getTime() - new Date(b.uptime?.checked_at || 0).getTime();
+        case "domain":
+          return (a.display_name || a.domain_name).localeCompare(b.display_name || b.domain_name);
+        case "status-asc":
+          // Sort by status (up first, then down, then unknown)
+          const aStatusAsc = a.uptime?.status;
+          const bStatusAsc = b.uptime?.status;
+          if (aStatusAsc === bStatusAsc) return 0;
+          if (aStatusAsc === true) return -1;
+          if (bStatusAsc === true) return 1;
+          if (aStatusAsc === false) return -1;
+          return 1;
+        case "status-desc":
+          // Sort by status (unknown first, then down, then up)
+          const aStatusDesc = a.uptime?.status;
+          const bStatusDesc = b.uptime?.status;
+          if (aStatusDesc === bStatusDesc) return 0;
+          if (aStatusDesc === undefined || aStatusDesc === null) return -1;
+          if (bStatusDesc === undefined || bStatusDesc === null) return 1;
+          if (aStatusDesc === false) return -1;
+          if (bStatusDesc === false) return 1;
+          return 1;
+        case "category-asc":
+          // Sort by category alphabetically (ascending)
+          const aCategoryAsc = (a.category || "").toLowerCase();
+          const bCategoryAsc = (b.category || "").toLowerCase();
+          return aCategoryAsc.localeCompare(bCategoryAsc);
+        case "category-desc":
+          // Sort by category alphabetically (descending)
+          const aCategoryDesc = (a.category || "").toLowerCase();
+          const bCategoryDesc = (b.category || "").toLowerCase();
+          return bCategoryDesc.localeCompare(aCategoryDesc);
+        case "ssl-asc":
+          // Sort SSL by days remaining (ascending - lowest first)
+          const aSslDays = a.ssl?.days_remaining ?? 999;
+          const bSslDays = b.ssl?.days_remaining ?? 999;
+          return aSslDays - bSslDays;
+        case "ssl-desc":
+          // Sort SSL by days remaining (descending - highest first)
+          const aSslDaysDesc = a.ssl?.days_remaining ?? 999;
+          const bSslDaysDesc = b.ssl?.days_remaining ?? 999;
+          return bSslDaysDesc - aSslDaysDesc;
+        case "expiry-asc":
+          // Sort Domain Expiry by days remaining (ascending - lowest first)
+          const aExpiryDays = a.domain_expiry?.days_remaining ?? 999;
+          const bExpiryDays = b.domain_expiry?.days_remaining ?? 999;
+          return aExpiryDays - bExpiryDays;
+        case "expiry-desc":
+          // Sort Domain Expiry by days remaining (descending - highest first)
+          const aExpiryDaysDesc = a.domain_expiry?.days_remaining ?? 999;
+          const bExpiryDaysDesc = b.domain_expiry?.days_remaining ?? 999;
+          return bExpiryDaysDesc - aExpiryDaysDesc;
+        default:
+          return 0;
+      }
     });
   }, [domains, searchQuery, statusFilter, categoryFilter, sortBy]);
 
@@ -305,38 +306,38 @@ export default function AdminPanel() {
     setCheckingDomain(id);
     setSuccess("");
     setError("");
-    
+
     try {
       setSuccess(`Checking domain: ${domain_name}...`);
-      
+
       // Check uptime
       await fetch('/api/check/uptime', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ domainId: id, url })
       });
-      
+
       // Check SSL
       await fetch('/api/check/ssl', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ domainId: id, domain: domain_name })
       });
-      
+
       // Check domain expiry
       await fetch('/api/check/whois', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ domainId: id, domain: domain_name })
       });
-      
+
       // Check IP records
       await fetch('/api/check/ip', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ domainId: id, domain: domain_name })
       });
-      
+
       setSuccess(`Domain ${domain_name} checked successfully!`);
       fetchDomains(); // Refresh data
     } catch (err: any) {
@@ -359,7 +360,7 @@ export default function AdminPanel() {
   const toggleSelectAll = () => {
     const newSelectAll = !selectAll;
     setSelectAll(newSelectAll);
-    
+
     if (newSelectAll) {
       // Select all domains that are currently filtered/visible
       setSelectedDomains(filteredDomains.map(domain => domain.id));
@@ -371,10 +372,10 @@ export default function AdminPanel() {
 
   const deleteSelectedDomains = async () => {
     if (selectedDomains.length === 0) return;
-    
+
     const confirmDelete = window.confirm(`Are you sure you want to delete ${selectedDomains.length} selected domains?`);
     if (!confirmDelete) return;
-    
+
     setLoading(true);
     try {
       // Delete selected domains
@@ -382,7 +383,7 @@ export default function AdminPanel() {
         const { error } = await supabase.from("domains").delete().eq("id", id);
         if (error) throw error;
       }
-      
+
       setSuccess(`${selectedDomains.length} domains deleted successfully!`);
       setSelectedDomains([]);
       setSelectAll(false);
@@ -395,17 +396,17 @@ export default function AdminPanel() {
 
   const checkSelectedDomains = async () => {
     if (selectedDomains.length === 0) return;
-    
+
     setLoading(true);
     setSuccess(`Checking ${selectedDomains.length} selected domains...`);
-    
+
     try {
       let successes = 0;
       let failures = 0;
-      
+
       // Get the selected domains from the full domains list
       const domainsToCheck = domains.filter(domain => selectedDomains.includes(domain.id));
-      
+
       // Process each selected domain
       for (const domain of domainsToCheck) {
         try {
@@ -415,35 +416,35 @@ export default function AdminPanel() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ domainId: domain.id, url: domain.uptime_url })
           });
-          
+
           // Check SSL
           await fetch('/api/check/ssl', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ domainId: domain.id, domain: domain.domain_name })
           });
-          
+
           // Check domain expiry
           await fetch('/api/check/whois', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ domainId: domain.id, domain: domain.domain_name })
           });
-          
+
           // Check IP records
           await fetch('/api/check/ip', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ domainId: domain.id, domain: domain.domain_name })
           });
-          
+
           successes++;
         } catch (err) {
           failures++;
           console.error(`Error checking domain ${domain.domain_name}:`, err);
         }
       }
-      
+
       setSuccess(`Domain checks completed: ${successes} successful, ${failures} failed`);
       fetchDomains(); // Refresh data
     } catch (error: any) {
@@ -455,7 +456,7 @@ export default function AdminPanel() {
 
   const updateSelectedDomainsCategory = async () => {
     if (selectedDomains.length === 0) return;
-    
+
     setLoading(true);
     try {
       const { error } = await supabase
@@ -464,14 +465,14 @@ export default function AdminPanel() {
         .in("id", selectedDomains);
 
       if (error) throw error;
-      
+
       setSuccess(`Category updated to "${selectedCategory}" for ${selectedDomains.length} ${selectedDomains.length === 1 ? 'domain' : 'domains'}!`);
       setTimeout(() => setSuccess(""), 3000);
-      
+
       // Auto-unselect after update
       setSelectedDomains([]);
       setSelectAll(false);
-      
+
       fetchDomains(); // Refresh data
     } catch (error: any) {
       setError(error.message);
@@ -490,11 +491,22 @@ export default function AdminPanel() {
     domainExpiring: domains.filter(d => d.domain_expiry?.days_remaining !== undefined && d.domain_expiry.days_remaining <= 30).length
   };
 
+  // Calculate category counts
+  const categoryStats: Record<string, number> = {
+    all: domains.length
+  };
+
+  domains.forEach(domain => {
+    if (domain.category) {
+      categoryStats[domain.category] = (categoryStats[domain.category] || 0) + 1;
+    }
+  });
+
   return (
     <div className="container mx-auto py-8 px-4">
       <DashboardHeader
         title="Admin Panel"
-        description="Manage and monitor your domains"
+        description=" "
         searchQuery={searchQuery}
         setSearchQuery={setSearchQuery}
         statusFilter={statusFilter}
@@ -504,11 +516,14 @@ export default function AdminPanel() {
         categories={categories}
         totalCount={domains.length}
         filteredCount={filteredDomains.length}
+        isAdmin={true}
+        onAddClick={() => setShowAddForm(!showAddForm)}
         stats={stats}
+        categoryStats={categoryStats}
         rightContent={
           <div className="flex items-center gap-4">
-            <Select 
-              value={sortBy} 
+            <Select
+              value={sortBy}
               onValueChange={(value) => setSortBy(value as any)}
             >
               <SelectTrigger className="w-[180px]">
@@ -520,11 +535,11 @@ export default function AdminPanel() {
                 <SelectItem value="oldest">Oldest First</SelectItem>
               </SelectContent>
             </Select>
-            
+
           </div>
         }
       />
-     
+
 
       {/* {domains.length > 0 && <StatsOverview domains={domains} />} */}
 
@@ -536,7 +551,15 @@ export default function AdminPanel() {
           </div>
         </div>
       )}
-       <DomainForm onSave={fetchDomains} />
+
+      <DomainForm
+        isOpen={showAddForm}
+        onOpenChange={setShowAddForm}
+        onSave={() => {
+          fetchDomains();
+          setShowAddForm(false);
+        }}
+      />
 
       {success && (
         <div className="card border-green-300 mb-6 bg-green-50 dark:bg-green-900/10">
@@ -555,8 +578,8 @@ export default function AdminPanel() {
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             <div className="flex items-center gap-2">
-              <Select 
-                value={selectedCategory} 
+              <Select
+                value={selectedCategory}
                 onValueChange={setSelectedCategory}
               >
                 <SelectTrigger className="w-[220px]">
@@ -571,7 +594,7 @@ export default function AdminPanel() {
                   <SelectItem value="Draft Suspended Website">Draft Suspended Website</SelectItem>
                 </SelectContent>
               </Select>
-              <button 
+              <button
                 onClick={updateSelectedDomainsCategory}
                 className="btn btn-secondary flex items-center gap-2"
                 disabled={loading}
@@ -580,7 +603,7 @@ export default function AdminPanel() {
               </button>
             </div>
             <div className="flex items-center gap-2">
-              <button 
+              <button
                 onClick={() => { setSelectedDomains([]); setSelectAll(false); }}
                 className="btn btn-secondary flex items-center gap-2"
                 disabled={loading}
@@ -589,7 +612,7 @@ export default function AdminPanel() {
                 <X size={16} />
                 Unselect
               </button>
-              <button 
+              <button
                 onClick={checkSelectedDomains}
                 className="btn btn-secondary flex items-center gap-2"
                 disabled={loading}
@@ -597,7 +620,7 @@ export default function AdminPanel() {
                 <RefreshCw size={16} />
                 Check Selected
               </button>
-              <button 
+              <button
                 onClick={deleteSelectedDomains}
                 className="btn btn-destructive flex items-center gap-2"
                 disabled={loading}
@@ -623,7 +646,7 @@ export default function AdminPanel() {
             <p className="text-muted-foreground mb-6">
               Add your first domain to start monitoring
             </p>
-            <button 
+            <button
               onClick={() => document.getElementById('add-domain-form')?.scrollIntoView({ behavior: 'smooth' })}
               className="btn-brand"
             >
@@ -715,9 +738,9 @@ export default function AdminPanel() {
                           onChange={() => toggleSelectDomain(domain.id)}
                           className="mr-2 h-4 w-4"
                         />
-                        <a 
-                          href={domain.uptime_url} 
-                          target="_blank" 
+                        <a
+                          href={domain.uptime_url}
+                          target="_blank"
                           rel="noopener noreferrer"
                           className="text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
                         >
@@ -839,8 +862,8 @@ export default function AdminPanel() {
               <label htmlFor="itemsPerPage" className="text-sm text-muted-foreground">
                 Per page:
               </label>
-              <Select 
-                value={itemsPerPage.toString()} 
+              <Select
+                value={itemsPerPage.toString()}
                 onValueChange={(value) => {
                   setItemsPerPage(Number(value));
                   setCurrentPage(1);
@@ -858,7 +881,7 @@ export default function AdminPanel() {
               </Select>
             </div>
           </div>
-          
+
           <div className="flex items-center gap-2">
             <button
               onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
@@ -868,7 +891,7 @@ export default function AdminPanel() {
               <ChevronLeft size={16} />
               <span className="hidden sm:inline">Previous</span>
             </button>
-            
+
             <div className="flex items-center gap-1">
               {Array.from({ length: Math.min(totalPages, 7) }, (_, i) => {
                 let pageNum;
@@ -881,23 +904,22 @@ export default function AdminPanel() {
                 } else {
                   pageNum = currentPage - 3 + i;
                 }
-                
+
                 return (
                   <button
                     key={pageNum}
                     onClick={() => setCurrentPage(pageNum)}
-                    className={`px-3 py-2 text-sm rounded-md transition-colors ${
-                      currentPage === pageNum
-                        ? 'bg-brand text-white'
-                        : 'bg-muted hover:bg-muted/80 text-foreground'
-                    }`}
+                    className={`px-3 py-2 text-sm rounded-md transition-colors ${currentPage === pageNum
+                      ? 'bg-brand text-white'
+                      : 'bg-muted hover:bg-muted/80 text-foreground'
+                      }`}
                   >
                     {pageNum}
                   </button>
                 );
               })}
             </div>
-            
+
             <button
               onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
               disabled={currentPage === totalPages}
