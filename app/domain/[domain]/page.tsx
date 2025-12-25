@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 import { createClient } from "@/utils/supabase/client";
 import EmbedInfo from "@/components/EmbedInfo";
 import Link from "next/link";
-import LoadingSpinner from "@/components/LoadingSpinner";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Card } from "@/components/ui/card";
 import { ChevronLeft, ExternalLink, Globe, Lock, Clock, CheckCircle, XCircle, Image as ImageIcon, Server, Tag, ListFilter } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 
@@ -107,7 +108,7 @@ export default function DomainPage({ params }: DomainPageProps) {
     };
 
     fetchDomainInfo();
-    
+
     // Set up refresh interval
     const intervalId = setInterval(fetchDomainInfo, 30000);
     return () => clearInterval(intervalId);
@@ -122,7 +123,7 @@ export default function DomainPage({ params }: DomainPageProps) {
           const url = domainData.uptime_url;
           // Try to fetch the metadata via proxy to avoid CORS issues
           const response = await fetch(`/api/site-preview?url=${encodeURIComponent(url)}`);
-          
+
           if (response.ok) {
             const data = await response.json();
             if (data.ogImage) {
@@ -144,7 +145,7 @@ export default function DomainPage({ params }: DomainPageProps) {
           setImageLoading(false);
         }
       };
-      
+
       fetchSiteImage();
     }
   }, [domainData]);
@@ -156,7 +157,7 @@ export default function DomainPage({ params }: DomainPageProps) {
 
   const formatTimeAgo = (dateString?: string) => {
     if (!dateString) return "Never";
-    
+
     const date = new Date(dateString);
     const now = new Date();
     const diffMs = now.getTime() - date.getTime();
@@ -207,10 +208,31 @@ export default function DomainPage({ params }: DomainPageProps) {
   if (loading) {
     return (
       <div className="container mx-auto py-8 px-4">
-        <div className="card text-center py-10">
-          <LoadingSpinner size="lg" />
-          <p className="mt-4 text-muted-foreground">Loading domain information...</p>
+        <div className="flex items-center mb-6">
+          <Skeleton className="h-10 w-40 mr-4" />
+          <Skeleton className="h-10 w-60" />
         </div>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+          {[...Array(5)].map((_, i) => (
+            <Card key={i} className="p-6">
+              <Skeleton className="h-6 w-32 mb-4" />
+              <div className="space-y-3">
+                <div className="flex justify-between"><Skeleton className="h-4 w-20" /><Skeleton className="h-4 w-12" /></div>
+                <div className="flex justify-between"><Skeleton className="h-4 w-24" /><Skeleton className="h-4 w-16" /></div>
+                <div className="flex justify-between"><Skeleton className="h-4 w-20" /><Skeleton className="h-4 w-12" /></div>
+              </div>
+            </Card>
+          ))}
+        </div>
+        <Card className="mb-8 p-6">
+          <Skeleton className="h-6 w-48 mb-4" />
+          <div className="space-y-4">
+            <div className="bg-muted h-10 w-full rounded" />
+            {[...Array(5)].map((_, i) => (
+              <Skeleton key={i} className="h-12 w-full" />
+            ))}
+          </div>
+        </Card>
       </div>
     );
   }
@@ -260,13 +282,13 @@ export default function DomainPage({ params }: DomainPageProps) {
             <h2 className="card-title">Website URL</h2>
             <p className="card-description">The monitored URL for this domain</p>
           </div>
-          
+
           <div className="p-6">
             <div className="flex gap-4">
               {/* Website Image/Icon */}
               {imageLoading ? (
                 <div className="w-20 h-20 bg-secondary/30 rounded-md flex items-center justify-center shrink-0">
-                  <LoadingSpinner size="sm" />
+                  <Skeleton className="h-full w-full rounded-md" />
                 </div>
               ) : siteImage ? (
                 <img
@@ -280,25 +302,25 @@ export default function DomainPage({ params }: DomainPageProps) {
                   <ImageIcon className="text-muted-foreground h-10 w-10" />
                 </div>
               )}
-              
+
               {/* Website Details */}
               <div className="flex flex-col justify-between">
-                <a 
-                  href={domainData.uptime_url} 
-                  target="_blank" 
+                <a
+                  href={domainData.uptime_url}
+                  target="_blank"
                   rel="noopener noreferrer"
                   className="text-brand hover:underline flex items-center gap-1 font-medium"
                 >
                   {domainData.uptime_url}
                   <ExternalLink size={14} />
                 </a>
-                
+
                 <div className="mt-2">
                   <div className="flex gap-2 items-center">
                     <span className="text-sm text-muted-foreground">Status:</span>
                     {getStatusBadge(domainData.uptime?.status || false)}
                   </div>
-                  
+
                   <div className="mt-1 text-sm text-muted-foreground">
                     Last checked: {formatTimeAgo(domainData.uptime?.checked_at)}
                   </div>
@@ -314,7 +336,7 @@ export default function DomainPage({ params }: DomainPageProps) {
             <h2 className="card-title">Status Badge</h2>
             <p className="card-description">Share your domain's status on your website</p>
           </div>
-          
+
           <div className="p-6">
             <EmbedInfo domain={domainData.domain_name} />
           </div>
@@ -325,8 +347,8 @@ export default function DomainPage({ params }: DomainPageProps) {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
         <div className="card">
           <div className="flex items-center gap-2 mb-4">
-            {domainData.uptime?.status ? 
-              <CheckCircle className="text-brand h-5 w-5" /> : 
+            {domainData.uptime?.status ?
+              <CheckCircle className="text-brand h-5 w-5" /> :
               <XCircle className="text-red-500 h-5 w-5" />
             }
             <h3 className="font-semibold">Uptime Status</h3>
@@ -361,16 +383,15 @@ export default function DomainPage({ params }: DomainPageProps) {
             </div>
             <div className="flex justify-between items-center">
               <span className="text-sm text-muted-foreground">Days remaining:</span>
-              <span className={`font-medium ${
-                !domainData.ssl ? "text-muted-foreground" : 
+              <span className={`font-medium ${!domainData.ssl ? "text-muted-foreground" :
                 domainData.ssl.days_remaining < 0 ? "text-red-500" :
-                domainData.ssl.days_remaining <= 10 ? "text-red-500" : 
-                domainData.ssl.days_remaining <= 30 ? "text-amber-500" : 
-                "text-brand"
-              }`}>
-                {!domainData.ssl ? "Unknown" : 
-                domainData.ssl.days_remaining < 0 ? `Expired ${Math.abs(domainData.ssl.days_remaining)} days ago` :
-                `${domainData.ssl.days_remaining} days`}
+                  domainData.ssl.days_remaining <= 10 ? "text-red-500" :
+                    domainData.ssl.days_remaining <= 30 ? "text-amber-500" :
+                      "text-brand"
+                }`}>
+                {!domainData.ssl ? "Unknown" :
+                  domainData.ssl.days_remaining < 0 ? `Expired ${Math.abs(domainData.ssl.days_remaining)} days ago` :
+                    `${domainData.ssl.days_remaining} days`}
               </span>
             </div>
             <div className="flex justify-between items-center">
@@ -392,16 +413,15 @@ export default function DomainPage({ params }: DomainPageProps) {
             </div>
             <div className="flex justify-between items-center">
               <span className="text-sm text-muted-foreground">Days remaining:</span>
-              <span className={`font-medium ${
-                !domainData.domain_expiry ? "text-muted-foreground" : 
+              <span className={`font-medium ${!domainData.domain_expiry ? "text-muted-foreground" :
                 domainData.domain_expiry.days_remaining < 0 ? "text-red-500" :
-                domainData.domain_expiry.days_remaining <= 10 ? "text-red-500" : 
-                domainData.domain_expiry.days_remaining <= 30 ? "text-amber-500" : 
-                "text-brand"
-              }`}>
-                {!domainData.domain_expiry ? "Unknown" : 
-                domainData.domain_expiry.days_remaining < 0 ? `Expired ${Math.abs(domainData.domain_expiry.days_remaining)} days ago` :
-                `${domainData.domain_expiry.days_remaining} days`}
+                  domainData.domain_expiry.days_remaining <= 10 ? "text-red-500" :
+                    domainData.domain_expiry.days_remaining <= 30 ? "text-amber-500" :
+                      "text-brand"
+                }`}>
+                {!domainData.domain_expiry ? "Unknown" :
+                  domainData.domain_expiry.days_remaining < 0 ? `Expired ${Math.abs(domainData.domain_expiry.days_remaining)} days ago` :
+                    `${domainData.domain_expiry.days_remaining} days`}
               </span>
             </div>
             <div className="flex justify-between items-center">
@@ -429,7 +449,7 @@ export default function DomainPage({ params }: DomainPageProps) {
             </div>
           </div>
         </div>
-        
+
         <div className="card">
           <div className="flex items-center gap-2 mb-4">
             <Server className="text-brand h-5 w-5" />
@@ -472,7 +492,7 @@ export default function DomainPage({ params }: DomainPageProps) {
           <h2 className="card-title">Detailed Uptime History</h2>
           <p className="card-description">Recent uptime check records</p>
         </div>
-        
+
         <div className="p-6">
           {domainData.uptime_history.length === 0 ? (
             <div className="text-center py-8 bg-secondary/30 rounded-md">
@@ -519,7 +539,7 @@ export default function DomainPage({ params }: DomainPageProps) {
           <h2 className="card-title">Uptime History</h2>
           <p className="card-description">Visualization of recent uptime checks</p>
         </div>
-        
+
         <div className="p-6">
           {domainData.uptime_history.length === 0 ? (
             <div className="text-center py-12 bg-secondary/30 rounded-md">
@@ -533,7 +553,7 @@ export default function DomainPage({ params }: DomainPageProps) {
                   <span>Response Time (ms)</span>
                   <span>Status</span>
                 </div>
-                
+
                 {/* Graph Container */}
                 <div className="flex-1 relative border-l border-b border-border">
                   {/* Y-axis labels for response time */}
@@ -546,31 +566,31 @@ export default function DomainPage({ params }: DomainPageProps) {
                     </span>
                     <span className="-translate-x-2 translate-y-2">0</span>
                   </div>
-                  
+
                   {/* Graph bars */}
                   <div className="absolute left-5 right-0 top-0 bottom-0 flex items-end">
                     {graphData.map((data: GraphDataPoint, index: number) => {
                       const height = data.responseTime ? (data.responseTime / maxResponseTime) * 100 : 0;
                       return (
-                        <div 
-                          key={index} 
-                          className="flex flex-col items-center group" 
-                          style={{ 
-                            width: `${100 / graphData.length}%`, 
+                        <div
+                          key={index}
+                          className="flex flex-col items-center group"
+                          style={{
+                            width: `${100 / graphData.length}%`,
                             height: '100%'
                           }}
                         >
                           {/* Status indicator */}
-                          <div 
+                          <div
                             className={`w-full h-1 mb-1 ${data.status ? 'bg-brand' : 'bg-red-500'}`}
                           ></div>
-                          
+
                           {/* Response time bar */}
-                          <div 
+                          <div
                             className={`w-4/5 ${data.status ? 'bg-brand/50' : 'bg-red-500/30'}`}
                             style={{ height: `${height}%` }}
                           ></div>
-                          
+
                           {/* Tooltip */}
                           <div className="absolute bottom-full opacity-0 group-hover:opacity-100 bg-background shadow-md rounded-md p-2 text-xs pointer-events-none transition-opacity z-10 mb-2">
                             <p>Time: {data.time}</p>
@@ -583,7 +603,7 @@ export default function DomainPage({ params }: DomainPageProps) {
                     })}
                   </div>
                 </div>
-                
+
                 {/* X-axis labels */}
                 <div className="flex justify-between mt-1 text-xs text-muted-foreground overflow-hidden">
                   {graphData.length > 0 && (

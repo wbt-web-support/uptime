@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/utils/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import LoadingSpinner from "@/components/LoadingSpinner";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Gauge, Globe, ExternalLink, AlertCircle, Search, Plus, X, Trash2, Link as LinkIcon, RefreshCw, CheckCircle, Clock, Table as TableIcon, LayoutGrid } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
@@ -101,8 +101,8 @@ export default function SpeedTestPage() {
         let innerPages: string[] = [];
         if (domain.inner_pages) {
           try {
-            innerPages = typeof domain.inner_pages === 'string' 
-              ? JSON.parse(domain.inner_pages) 
+            innerPages = typeof domain.inner_pages === 'string'
+              ? JSON.parse(domain.inner_pages)
               : domain.inner_pages;
             // Ensure it's an array
             if (!Array.isArray(innerPages)) {
@@ -271,10 +271,10 @@ export default function SpeedTestPage() {
     const urlsToTest = [domain.uptime_url, ...(domain.inner_pages || [])];
     const strategies: Array<"mobile" | "desktop"> = ["mobile", "desktop"];
     const totalExpectedResults = urlsToTest.length * strategies.length;
-    
+
     const startTime = Date.now();
     const pollInterval = 3000; // Check every 3 seconds
-    
+
     while (Date.now() - startTime < maxWaitTime) {
       try {
         // Check all URLs and strategies for this domain
@@ -283,39 +283,39 @@ export default function SpeedTestPage() {
           .select("url, strategy, performance_score")
           .eq("domain_id", domain.id)
           .in("strategy", strategies);
-        
+
         if (error) {
           console.error("Error checking results:", error);
           await new Promise(resolve => setTimeout(resolve, pollInterval));
           continue;
         }
-        
+
         // Count how many have valid results (performance_score >= 0)
         const validResults = (results || []).filter(
           r => r.performance_score !== null && r.performance_score !== undefined && r.performance_score >= 0
         );
-        
+
         // Check for errors (performance_score === -1)
         const errorResults = (results || []).filter(
           r => r.performance_score !== null && r.performance_score === -1
         );
-        
+
         // If we have all valid results, we're done
         if (validResults.length === totalExpectedResults) {
           return { success: true };
         }
-        
+
         // If we have all results (valid + errors), we're done (but with some errors)
         if (validResults.length + errorResults.length === totalExpectedResults) {
           if (errorResults.length > 0) {
-            return { 
-              success: true, 
-              message: `Completed with ${errorResults.length} error${errorResults.length > 1 ? 's' : ''}` 
+            return {
+              success: true,
+              message: `Completed with ${errorResults.length} error${errorResults.length > 1 ? 's' : ''}`
             };
           }
           return { success: true };
         }
-        
+
         // Still waiting for results
         await new Promise(resolve => setTimeout(resolve, pollInterval));
       } catch (err: any) {
@@ -323,7 +323,7 @@ export default function SpeedTestPage() {
         await new Promise(resolve => setTimeout(resolve, pollInterval));
       }
     }
-    
+
     // Timeout
     return { success: false, message: "Timeout waiting for results" };
   };
@@ -395,11 +395,11 @@ export default function SpeedTestPage() {
             prev.map((item) =>
               item.domainId === domain.id
                 ? {
-                    ...item,
-                    status: "error",
-                    finishedAt: Date.now(),
-                    message: `Failed to queue tests after ${attempt} attempt${attempt > 1 ? "s" : ""}: ${lastErrors.join("; ")}`,
-                  }
+                  ...item,
+                  status: "error",
+                  finishedAt: Date.now(),
+                  message: `Failed to queue tests after ${attempt} attempt${attempt > 1 ? "s" : ""}: ${lastErrors.join("; ")}`,
+                }
                 : item
             )
           );
@@ -409,16 +409,16 @@ export default function SpeedTestPage() {
 
         // Step 2: Wait for actual results
         const waitResult = await waitForDomainResults(domain);
-        
+
         setAnalysisLog((prev) =>
           prev.map((item) =>
             item.domainId === domain.id
               ? {
-                  ...item,
-                  status: waitResult.success ? "done" : "error",
-                  finishedAt: Date.now(),
-                  message: waitResult.message,
-                }
+                ...item,
+                status: waitResult.success ? "done" : "error",
+                finishedAt: Date.now(),
+                message: waitResult.message,
+              }
               : item
           )
         );
@@ -452,11 +452,11 @@ export default function SpeedTestPage() {
     }
 
     setAddingDomain(true);
-    
+
     // Check for duplicates in local state first to avoid unnecessary API calls
     const duplicate = domains.find(
-      (d) => 
-        d.domain_name.toLowerCase() === domain_name.trim().toLowerCase() || 
+      (d) =>
+        d.domain_name.toLowerCase() === domain_name.trim().toLowerCase() ||
         d.uptime_url === normalizedUptime
     );
 
@@ -512,16 +512,16 @@ export default function SpeedTestPage() {
   // Filter and sort domains
   const filteredDomains = domains
     .filter(domain => {
-      const matchesSearch = 
+      const matchesSearch =
         domain.domain_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         searchQuery.toLowerCase().includes(domain.domain_name.toLowerCase()) ||
         (domain.display_name && domain.display_name.toLowerCase().includes(searchQuery.toLowerCase())) ||
         (domain.uptime_url && domain.uptime_url.toLowerCase().includes(searchQuery.toLowerCase()));
-      
-      const matchesCategory = 
-        categoryFilter === 'all' || 
+
+      const matchesCategory =
+        categoryFilter === 'all' ||
         domain.category === categoryFilter;
-      
+
       // Performance score filter
       const latest = latestResults[domain.id];
       const performanceScore = latest?.performance_score;
@@ -534,7 +534,7 @@ export default function SpeedTestPage() {
         if (performanceFilter === 'high') return performanceScore >= 90;
         return true;
       })();
-      
+
       // Analysis data filter
       const matchesAnalysisData = (() => {
         if (analysisDataFilter === 'all') return true;
@@ -546,11 +546,11 @@ export default function SpeedTestPage() {
         }
         return true;
       })();
-      
+
       return matchesSearch && matchesCategory && matchesPerformance && matchesAnalysisData;
     })
     .sort((a, b) => {
-      switch(sortBy) {
+      switch (sortBy) {
         case "newest":
           return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
         case "oldest":
@@ -653,7 +653,7 @@ export default function SpeedTestPage() {
           d.id === domainId ? { ...d, inner_pages: updatedUrls } : d
         )
       );
-      
+
       // Clear input if this was the URL being added
       if (newUrl.trim() === url) {
         setNewUrl("");
@@ -711,7 +711,7 @@ export default function SpeedTestPage() {
 
     try {
       const startTime = performance.now();
-      
+
       // Create an abort controller for timeout
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
@@ -745,7 +745,7 @@ export default function SpeedTestPage() {
         clearTimeout(timeoutId);
         const endTime = performance.now();
         const responseTime = Math.round(endTime - startTime);
-        
+
         // If it's a timeout or network error, we still got a response time
         if (fetchError.name === 'AbortError') {
           setSpeedTestResults((prev) => ({
@@ -793,7 +793,7 @@ export default function SpeedTestPage() {
 
   const testAllUrlsForDomain = async (domain: Domain) => {
     const urlsToTest = [domain.uptime_url, ...(domain.inner_pages || [])];
-    
+
     // Test all URLs in parallel
     await Promise.allSettled(
       urlsToTest.map(url => testUrlSpeed(url))
@@ -1113,7 +1113,7 @@ export default function SpeedTestPage() {
                     className="flex items-center justify-between text-xs border rounded-md px-3 py-2 bg-muted/40"
                   >
                     <div className="flex items-center gap-2">
-                    <Checkbox checked disabled className="pointer-events-none" />
+                      <Checkbox checked disabled className="pointer-events-none" />
                       <span className="font-medium">{item.name}</span>
                     </div>
                     <div className="flex items-center gap-2">
@@ -1145,9 +1145,46 @@ export default function SpeedTestPage() {
       )}
 
       {loading ? (
-        <div className="py-20">
-          <LoadingSpinner size="lg" />
-        </div>
+        viewMode === "cards" ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {[...Array(6)].map((_, i) => (
+              <Card key={i} className="animate-pulse">
+                <CardHeader>
+                  <div className="flex justify-between items-start gap-4">
+                    <Skeleton className="h-5 w-5 rounded" />
+                    <div className="flex-1 space-y-2">
+                      <Skeleton className="h-5 w-32" />
+                      <Skeleton className="h-4 w-48" />
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-2 gap-2">
+                    {[...Array(6)].map((_, j) => (
+                      <Skeleton key={j} className="h-4 w-full" />
+                    ))}
+                  </div>
+                  <Skeleton className="h-10 w-full rounded-md" />
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        ) : (
+          <div className="border rounded-lg overflow-hidden">
+            <div className="bg-muted p-4 border-b flex gap-4">
+              {[...Array(8)].map((_, i) => (
+                <Skeleton key={i} className="h-4 flex-1" />
+              ))}
+            </div>
+            {[...Array(8)].map((_, i) => (
+              <div key={i} className="p-4 border-b flex gap-4">
+                {[...Array(8)].map((_, j) => (
+                  <Skeleton key={j} className="h-4 flex-1" />
+                ))}
+              </div>
+            ))}
+          </div>
+        )
       ) : filteredDomains.length === 0 ? (
         <Card>
           <CardContent className="pt-6">
@@ -1173,8 +1210,8 @@ export default function SpeedTestPage() {
                       filteredDomains.length === 0
                         ? false
                         : selectedDomains.size === filteredDomains.length
-                        ? true
-                        : "indeterminate"
+                          ? true
+                          : "indeterminate"
                     }
                     onCheckedChange={(checked) => {
                       if (checked) selectAllFiltered();
@@ -1313,8 +1350,8 @@ export default function SpeedTestPage() {
           {filteredDomains.map((domain) => {
             const latest = latestResults[domain.id];
             return (
-              <Card 
-                key={domain.id} 
+              <Card
+                key={domain.id}
                 className="hover:shadow-lg transition-shadow cursor-pointer"
                 onClick={() => {
                   // Start background tests for this domain before navigating
@@ -1348,33 +1385,33 @@ export default function SpeedTestPage() {
                       <CardDescription className="flex items-center gap-1 mt-1">
                         <Globe className="h-3 w-3" />
                         <a
-                        href={domain.uptime_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-sm text-brand hover:underline flex items-center gap-1"
-                      > <span className="text-xs">{domain.domain_name}</span>
-                     
-                      </a>
-                      
+                          href={domain.uptime_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-sm text-brand hover:underline flex items-center gap-1"
+                        > <span className="text-xs">{domain.domain_name}</span>
+
+                        </a>
+
                       </CardDescription>
                     </div>
                     <div>
-                  {domain.category && (
-                    <div className="flex items-center gap-1">
-                      <span className="text-xs text-muted-foreground">Category:</span>
-                      <span className="text-xs font-medium text-blue-600 dark:text-blue-400 truncate max-w-[120px]" title={domain.category}>
-                        {domain.category.length > 18 ? `${domain.category.slice(0, 18)}…` : domain.category}
-                      </span>
-                    </div>
-                  )}
-                  {domain.tag && (
-                    <div className="flex items-center gap-1">
-                      <span className="text-xs text-muted-foreground">Tag:</span>
-                      <span className="text-xs font-medium text-purple-600 dark:text-purple-400 truncate max-w-[100px]" title={domain.tag}>
-                        {domain.tag.length > 15 ? `${domain.tag.slice(0, 15)}…` : domain.tag}
-                      </span>
-                    </div>
-                  )}
+                      {domain.category && (
+                        <div className="flex items-center gap-1">
+                          <span className="text-xs text-muted-foreground">Category:</span>
+                          <span className="text-xs font-medium text-blue-600 dark:text-blue-400 truncate max-w-[120px]" title={domain.category}>
+                            {domain.category.length > 18 ? `${domain.category.slice(0, 18)}…` : domain.category}
+                          </span>
+                        </div>
+                      )}
+                      {domain.tag && (
+                        <div className="flex items-center gap-1">
+                          <span className="text-xs text-muted-foreground">Tag:</span>
+                          <span className="text-xs font-medium text-purple-600 dark:text-purple-400 truncate max-w-[100px]" title={domain.tag}>
+                            {domain.tag.length > 15 ? `${domain.tag.slice(0, 15)}…` : domain.tag}
+                          </span>
+                        </div>
+                      )}
 
                     </div>
                   </div>
@@ -1430,95 +1467,93 @@ export default function SpeedTestPage() {
                         </span>
                       </div>
 
-                  {/* Main URL Test Result */}
-                  <div className="space-y-1">
-                    <div
-                      className={`flex items-center gap-2 p-2 rounded-md text-xs border ${
-                        speedTestResults[domain.uptime_url]?.status === 'success'
-                          ? 'bg-green-50 dark:bg-green-900/10 border-green-200 dark:border-green-800'
-                          : speedTestResults[domain.uptime_url]?.status === 'error'
-                          ? 'bg-red-50 dark:bg-red-900/10 border-red-200 dark:border-red-800'
-                          : 'bg-muted/50 border-border'
-                      }`}
-                    >
-                      <Globe className="h-3 w-3 flex-shrink-0" />
-                      <span className="flex-1 truncate font-mono text-xs">
-                        {domain.uptime_url}
-                      </span>
-                      {speedTestResults[domain.uptime_url]?.status === 'testing' ? (
-                        <div className="flex items-center gap-1 text-muted-foreground">
-                          <div className="h-3 w-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                          <span>Testing...</span>
-                        </div>
-                      ) : speedTestResults[domain.uptime_url]?.status === 'success' ? (
-                        <div className="flex items-center gap-1 text-green-600 dark:text-green-400">
-                          <CheckCircle className="h-3 w-3" />
-                          <span className="flex items-center gap-1">
-                            <Clock className="h-3 w-3" />
-                            {speedTestResults[domain.uptime_url]?.responseTime}ms
-                          </span>
-                        </div>
-                      ) : speedTestResults[domain.uptime_url]?.status === 'error' ? (
-                        <div className="flex items-center gap-1 text-red-600 dark:text-red-400">
-                          <AlertCircle className="h-3 w-3" />
-                          <span className="text-xs">{speedTestResults[domain.uptime_url]?.error || 'Error'}</span>
-                        </div>
-                      ) : (
-                        // <Button
-                        //   variant="ghost"
-                        //   size="sm"
-                        //   className="h-6 text-xs"
-                        //   onClick={(e) => {
-                        //     e.stopPropagation();
-                        //     testUrlSpeed(domain.uptime_url);
-                        //   }}
-                        //   disabled={testingUrls.has(domain.uptime_url)}
-                        // >
-                        //   <Gauge className="h-3 w-3 mr-1" />
-                        //   Test
-                        // </Button>
-                        <></>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Inner Pages Test Results */}
-                  {(domain.inner_pages || []).length > 0 && (
-                    <div className="space-y-1">
-                      {(domain.inner_pages || []).map((url, index) => (
+                      {/* Main URL Test Result */}
+                      <div className="space-y-1">
                         <div
-                          key={index}
-                          className={`flex items-center gap-2 p-2 rounded-md text-xs border ${
-                            speedTestResults[url]?.status === 'success'
-                              ? 'bg-green-50 dark:bg-green-900/10 border-green-200 dark:border-green-800'
-                              : speedTestResults[url]?.status === 'error'
+                          className={`flex items-center gap-2 p-2 rounded-md text-xs border ${speedTestResults[domain.uptime_url]?.status === 'success'
+                            ? 'bg-green-50 dark:bg-green-900/10 border-green-200 dark:border-green-800'
+                            : speedTestResults[domain.uptime_url]?.status === 'error'
                               ? 'bg-red-50 dark:bg-red-900/10 border-red-200 dark:border-red-800'
                               : 'bg-muted/50 border-border'
-                          }`}
+                            }`}
                         >
-                          <LinkIcon className="h-3 w-3 flex-shrink-0" />
-                          <span className="flex-1 truncate font-mono text-xs">{url}</span>
-                          {speedTestResults[url]?.status === 'testing' ? (
+                          <Globe className="h-3 w-3 flex-shrink-0" />
+                          <span className="flex-1 truncate font-mono text-xs">
+                            {domain.uptime_url}
+                          </span>
+                          {speedTestResults[domain.uptime_url]?.status === 'testing' ? (
                             <div className="flex items-center gap-1 text-muted-foreground">
                               <div className="h-3 w-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
                               <span>Testing...</span>
                             </div>
-                          ) : speedTestResults[url]?.status === 'success' ? (
+                          ) : speedTestResults[domain.uptime_url]?.status === 'success' ? (
                             <div className="flex items-center gap-1 text-green-600 dark:text-green-400">
                               <CheckCircle className="h-3 w-3" />
                               <span className="flex items-center gap-1">
                                 <Clock className="h-3 w-3" />
-                                {speedTestResults[url]?.responseTime}ms
+                                {speedTestResults[domain.uptime_url]?.responseTime}ms
                               </span>
                             </div>
-                          ) : speedTestResults[url]?.status === 'error' ? (
+                          ) : speedTestResults[domain.uptime_url]?.status === 'error' ? (
                             <div className="flex items-center gap-1 text-red-600 dark:text-red-400">
                               <AlertCircle className="h-3 w-3" />
-                              <span className="text-xs">{speedTestResults[url]?.error || 'Error'}</span>
+                              <span className="text-xs">{speedTestResults[domain.uptime_url]?.error || 'Error'}</span>
                             </div>
                           ) : (
-                            <div className="flex items-center gap-1">
-                              {/* <Button
+                            // <Button
+                            //   variant="ghost"
+                            //   size="sm"
+                            //   className="h-6 text-xs"
+                            //   onClick={(e) => {
+                            //     e.stopPropagation();
+                            //     testUrlSpeed(domain.uptime_url);
+                            //   }}
+                            //   disabled={testingUrls.has(domain.uptime_url)}
+                            // >
+                            //   <Gauge className="h-3 w-3 mr-1" />
+                            //   Test
+                            // </Button>
+                            <></>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Inner Pages Test Results */}
+                      {(domain.inner_pages || []).length > 0 && (
+                        <div className="space-y-1">
+                          {(domain.inner_pages || []).map((url, index) => (
+                            <div
+                              key={index}
+                              className={`flex items-center gap-2 p-2 rounded-md text-xs border ${speedTestResults[url]?.status === 'success'
+                                ? 'bg-green-50 dark:bg-green-900/10 border-green-200 dark:border-green-800'
+                                : speedTestResults[url]?.status === 'error'
+                                  ? 'bg-red-50 dark:bg-red-900/10 border-red-200 dark:border-red-800'
+                                  : 'bg-muted/50 border-border'
+                                }`}
+                            >
+                              <LinkIcon className="h-3 w-3 flex-shrink-0" />
+                              <span className="flex-1 truncate font-mono text-xs">{url}</span>
+                              {speedTestResults[url]?.status === 'testing' ? (
+                                <div className="flex items-center gap-1 text-muted-foreground">
+                                  <div className="h-3 w-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                                  <span>Testing...</span>
+                                </div>
+                              ) : speedTestResults[url]?.status === 'success' ? (
+                                <div className="flex items-center gap-1 text-green-600 dark:text-green-400">
+                                  <CheckCircle className="h-3 w-3" />
+                                  <span className="flex items-center gap-1">
+                                    <Clock className="h-3 w-3" />
+                                    {speedTestResults[url]?.responseTime}ms
+                                  </span>
+                                </div>
+                              ) : speedTestResults[url]?.status === 'error' ? (
+                                <div className="flex items-center gap-1 text-red-600 dark:text-red-400">
+                                  <AlertCircle className="h-3 w-3" />
+                                  <span className="text-xs">{speedTestResults[url]?.error || 'Error'}</span>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-1">
+                                  {/* <Button
                                 variant="ghost"
                                 size="sm"
                                 className="h-6 w-6 p-0"
@@ -1531,59 +1566,59 @@ export default function SpeedTestPage() {
                               >
                                 <Gauge className="h-3 w-3" />
                               </Button> */}
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-6 w-6 p-0 text-red-600 hover:text-red-700"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  removeUrl(domain.id, index);
-                                }}
-                                title="Remove URL"
-                              >
-                                <Trash2 className="h-3 w-3" />
-                              </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-6 w-6 p-0 text-red-600 hover:text-red-700"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      removeUrl(domain.id, index);
+                                    }}
+                                    title="Remove URL"
+                                  >
+                                    <Trash2 className="h-3 w-3" />
+                                  </Button>
+                                </div>
+                              )}
                             </div>
-                          )}
+                          ))}
                         </div>
-                      ))}
+                      )}
                     </div>
-                  )}
-                </div>
 
-                <div className="pt-2 border-t">
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    className="w-full"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      openAddUrlModal(domain.id);
-                    }}
-                  >
-                    <Plus className="h-4 w-4 mr-2" />
-                    Add URL
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    className="w-full mt-2"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      router.push(`/speed-test/${domain.id}`);
-                    }}
-                  >
-                    <Gauge className="h-4 w-4 mr-2" />
-                    View Analysis
-                  </Button>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        );
-      })}
-    </div>
-  )}
+                    <div className="pt-2 border-t">
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        className="w-full"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openAddUrlModal(domain.id);
+                        }}
+                      >
+                        <Plus className="h-4 w-4 mr-2" />
+                        Add URL
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        className="w-full mt-2"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          router.push(`/speed-test/${domain.id}`);
+                        }}
+                      >
+                        <Gauge className="h-4 w-4 mr-2" />
+                        View Analysis
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      )}
       {/* Add URL Modal */}
       {openModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -1666,9 +1701,9 @@ export default function SpeedTestPage() {
                 {(() => {
                   const domain = domains.find((d) => d.id === openModal);
                   const existingUrls = domain?.inner_pages || [];
-                  
+
                   if (existingUrls.length === 0) return null;
-                  
+
                   return (
                     <div className="space-y-2">
                       <p className="text-xs font-medium text-foreground">

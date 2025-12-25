@@ -6,6 +6,7 @@ import { createClient } from "@/utils/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import LoadingSpinner from "@/components/LoadingSpinner";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Gauge, Globe, ArrowLeft, RefreshCw, Smartphone, Monitor, AlertCircle, CheckCircle, Copy, Check, ChevronDown, ChevronRight, Image as ImageIcon } from "lucide-react";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 
@@ -40,7 +41,7 @@ export default function SpeedTestAnalysisPage() {
   const params = useParams();
   const router = useRouter();
   const domainId = params.domainId as string;
-  
+
   const [domain, setDomain] = useState<Domain | null>(null);
   const [loading, setLoading] = useState(true);
   const [authChecked, setAuthChecked] = useState(false);
@@ -104,16 +105,16 @@ export default function SpeedTestAnalysisPage() {
     if (!domain) return;
 
     const urlsToCheck = [domain.uptime_url, ...(domain.inner_pages || [])];
-    
+
     console.log(`🔍 [${strategy.toUpperCase()}] Checking database for current strategy (${strategy})...`);
-    
+
     // Check database for current strategy only
     const checks = urlsToCheck.map(async (url) => {
       const normalizedUrl = normalizeUrl(url);
       const resultKey = `${url}-${strategy}`;
-      
+
       console.log(`🔍 [${strategy.toUpperCase()}] Querying database for: ${url} (normalized: ${normalizedUrl})`);
-      
+
       const { data: existingResult, error: dbError } = await supabase
         .from("pagespeed_results")
         .select("*")
@@ -137,11 +138,11 @@ export default function SpeedTestAnalysisPage() {
           url: existingResult.url,
           tested_at: existingResult.tested_at
         });
-        
+
         if (existingResult.performance_score !== null && existingResult.performance_score >= 0) {
           // Valid result - mark as cached
           console.log(`✅ [${strategy.toUpperCase()}] Valid result found, loading into state for ${resultKey}`);
-          
+
           // Immediately load into state
           setResults((prev) => {
             const updated = {
@@ -154,7 +155,7 @@ export default function SpeedTestAnalysisPage() {
             });
             return updated;
           });
-          
+
           setFromCache((prev) => ({
             ...prev,
             [resultKey]: true,
@@ -174,7 +175,7 @@ export default function SpeedTestAnalysisPage() {
           const testedAt = new Date(existingResult.tested_at);
           const now = new Date();
           const minutesAgo = (now.getTime() - testedAt.getTime()) / (1000 * 60);
-          
+
           if (minutesAgo > 10) {
             // Stale queued record - treat as if no data exists
             console.log(`⚠️ [${strategy.toUpperCase()}] Stale queued record for ${url} (${Math.round(minutesAgo)} minutes old), treating as no data`);
@@ -188,13 +189,13 @@ export default function SpeedTestAnalysisPage() {
           } else {
             // Recent queued record - test might still be running
             console.log(`⏳ [${strategy.toUpperCase()}] Test in progress for ${url} (${Math.round(minutesAgo)} minutes ago)`);
-            
+
             // Load into state to show "queued" status
             setResults((prev) => ({
               ...prev,
               [resultKey]: existingResult,
             }));
-            
+
             setTestingUrls((prev) => new Set(prev).add(resultKey));
             pollForResult(url, strategy);
             // Return as in progress so we don't start a new test
@@ -238,17 +239,17 @@ export default function SpeedTestAnalysisPage() {
       // Check for any URLs that are still testing
       const urlsToTest = [domain.uptime_url, ...(domain.inner_pages || [])];
       const strategies: ('mobile' | 'desktop')[] = ['mobile', 'desktop'];
-      
+
       urlsToTest.forEach(async (url) => {
         const normalizedUrl = normalizeUrl(url);
-        
+
         strategies.forEach(async (strat) => {
           const resultKey = `${url}-${strat}`;
-          
+
           // Only check if this URL+strategy is currently testing
-          if (testingUrls.has(resultKey) || 
-              (results[resultKey] && results[resultKey].performance_score === null)) {
-            
+          if (testingUrls.has(resultKey) ||
+            (results[resultKey] && results[resultKey].performance_score === null)) {
+
             const { data: result } = await supabase
               .from("pagespeed_results")
               .select("*")
@@ -299,8 +300,8 @@ export default function SpeedTestAnalysisPage() {
       let innerPages: string[] = [];
       if (data.inner_pages) {
         try {
-          innerPages = typeof data.inner_pages === 'string' 
-            ? JSON.parse(data.inner_pages) 
+          innerPages = typeof data.inner_pages === 'string'
+            ? JSON.parse(data.inner_pages)
             : data.inner_pages;
           if (!Array.isArray(innerPages)) {
             innerPages = [];
@@ -327,15 +328,15 @@ export default function SpeedTestAnalysisPage() {
 
     const urlsToTest = [domain.uptime_url, ...(domain.inner_pages || [])];
     const strategies: ('mobile' | 'desktop')[] = ['mobile', 'desktop'];
-    
+
     console.log(`🔍 Checking database for ${urlsToTest.length} URLs (both mobile and desktop)...`);
-    
+
     // FIRST: Check database for all URLs and both strategies in parallel
-    const cacheChecks = urlsToTest.flatMap(url => 
+    const cacheChecks = urlsToTest.flatMap(url =>
       strategies.map(async (strat) => {
         const normalizedUrl = normalizeUrl(url);
         const resultKey = `${url}-${strat}`;
-        
+
         // Check both original and normalized URL
         const { data: existingResult, error: dbError } = await supabase
           .from("pagespeed_results")
@@ -356,14 +357,14 @@ export default function SpeedTestAnalysisPage() {
             performance_score: existingResult.performance_score,
             tested_at: existingResult.tested_at
           });
-          
+
           // Check if test is in progress (performance_score is null)
           if (existingResult.performance_score === null) {
             // Check if it's stale (older than 10 minutes)
             const testedAt = new Date(existingResult.tested_at);
             const now = new Date();
             const minutesAgo = (now.getTime() - testedAt.getTime()) / (1000 * 60);
-            
+
             if (minutesAgo > 10) {
               // Stale queued record - treat as if no data exists
               console.log(`⚠️ Stale queued record for ${url} (${strat}) (${Math.round(minutesAgo)} minutes old), will start new test`);
@@ -376,13 +377,13 @@ export default function SpeedTestAnalysisPage() {
             } else {
               // Recent queued record - test might still be running
               console.log(`⏳ Test in progress for ${url} (${strat}) (${Math.round(minutesAgo)} minutes ago)`);
-              
+
               // Load into state to show "queued" status
               setResults((prev) => ({
                 ...prev,
                 [resultKey]: existingResult,
               }));
-              
+
               setTestingUrls((prev) => new Set(prev).add(resultKey));
               // Start polling for this URL+strategy
               pollForResult(url, strat);
@@ -390,13 +391,13 @@ export default function SpeedTestAnalysisPage() {
             }
           } else if (existingResult.performance_score >= 0) {
             console.log(`✅ Valid result found for ${url} (${strat}), score: ${existingResult.performance_score}`);
-            
+
             // Always update state with existing result
             setResults((prev) => ({
               ...prev,
               [resultKey]: existingResult,
             }));
-            
+
             setFromCache((prev) => ({
               ...prev,
               [resultKey]: true,
@@ -423,7 +424,7 @@ export default function SpeedTestAnalysisPage() {
             return { url, strategy: strat, cached: true, hasData: false, inProgress: false };
           }
         }
-        
+
         console.log(`❌ No result found in database for ${url} (${strat})`);
         // Make sure it's not marked as testing if no data exists
         setTestingUrls((prev) => {
@@ -436,7 +437,7 @@ export default function SpeedTestAnalysisPage() {
     );
 
     const cacheResults = await Promise.all(cacheChecks);
-    
+
     // SECOND: Start background tests ONLY for URLs+strategies without data AND not in progress
     const testsToStart = cacheResults
       .filter(result => !result.hasData && !result.inProgress)
@@ -456,10 +457,10 @@ export default function SpeedTestAnalysisPage() {
     if (!domain) return;
 
     const resultKey = `${url}-${strat}`;
-    
+
     // Mark as testing
     setTestingUrls((prev) => new Set(prev).add(resultKey));
-    
+
     try {
       // Start background test (returns immediately)
       await fetch('/api/pagespeed/background', {
@@ -490,7 +491,7 @@ export default function SpeedTestAnalysisPage() {
     let attempts = 0;
     const normalizedUrl = normalizeUrl(url);
     const resultKey = `${url}-${strat}`;
-    
+
     const poll = async () => {
       if (attempts >= maxAttempts) {
         console.warn(`Polling timeout for ${url} (${strat}) after ${maxAttempts} attempts`);
@@ -536,7 +537,7 @@ export default function SpeedTestAnalysisPage() {
             console.log(`✅ Test completed for ${url} (${strat}), score: ${result.performance_score}`);
             return;
           }
-          
+
           // Test is still in progress (performance_score is null)
           // Update result in state to show it's queued
           setResults((prev) => ({
@@ -635,7 +636,7 @@ export default function SpeedTestAnalysisPage() {
   const copyRawData = async (url: string) => {
     const resultKey = `${url}-${strategy}`;
     const result = results[resultKey];
-    
+
     if (!result || !result.raw_data) {
       console.error('No raw data available for', url);
       return;
@@ -716,8 +717,29 @@ export default function SpeedTestAnalysisPage() {
   if (loading) {
     return (
       <div className="container mx-auto px-4 py-8">
-        <div className="flex justify-center items-center min-h-[400px]">
-          <LoadingSpinner size="lg" />
+        <div className="mb-6 space-y-4">
+          <Skeleton className="h-10 w-40" />
+          <div className="flex items-center gap-3">
+            <Skeleton className="h-12 w-12 rounded-full" />
+            <Skeleton className="h-12 w-80" />
+          </div>
+          <Skeleton className="h-6 w-96" />
+        </div>
+        <Skeleton className="h-10 w-48 mb-6" />
+        <div className="space-y-6">
+          {[...Array(3)].map((_, i) => (
+            <Card key={i} className="p-6">
+              <div className="flex justify-between mb-6">
+                <Skeleton className="h-8 w-60" />
+                <Skeleton className="h-8 w-32" />
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                {[...Array(4)].map((_, j) => (
+                  <Skeleton key={j} className="h-24 w-full" />
+                ))}
+              </div>
+            </Card>
+          ))}
         </div>
       </div>
     );
@@ -809,7 +831,7 @@ export default function SpeedTestAnalysisPage() {
           const screenshotKey = `${resultKey}-screenshot`;
           const finalScreenshotSrc = getFinalScreenshotSrc(result);
           const screenshotThumbs = getScreenshotThumbnails(result);
-          
+
           // Debug logging
           if (strategy === 'desktop') {
             console.log(`🖥️ [UI] Desktop check for ${url}:`, {
@@ -820,7 +842,7 @@ export default function SpeedTestAnalysisPage() {
               cached: fromCache[resultKey]
             });
           }
-          
+
           // Check if testing: only if explicitly in testingUrls set AND result has null score
           // If result exists with valid score, it's not testing
           const hasValidResult = result && result.performance_score !== null && result.performance_score >= 0;
@@ -987,7 +1009,7 @@ export default function SpeedTestAnalysisPage() {
                         <div className="p-3 border rounded-lg">
                           <div className="text-xs text-muted-foreground mb-1">CLS</div>
                           <div className="text-lg font-semibold">
-                            {result.cumulative_layout_shift !== null 
+                            {result.cumulative_layout_shift !== null
                               ? result.cumulative_layout_shift.toFixed(3)
                               : 'N/A'}
                           </div>

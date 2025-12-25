@@ -8,7 +8,7 @@ import DomainForm from "@/components/DomainForm";
 import DashboardHeader from "@/components/DashboardHeader";
 import StatsOverview from "@/components/StatsOverview";
 import DomainActions from "@/components/DomainActions";
-import LoadingSpinner from "@/components/LoadingSpinner";
+import { Skeleton } from "@/components/ui/skeleton";
 import { AlertTriangle, Clock, CheckCircle, RefreshCw, Activity, Shield, Globe, Server, ExternalLink, Trash2, ArrowUp, ArrowDown, ChevronsUpDown, ChevronLeft, ChevronRight, X } from "lucide-react";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 
@@ -618,9 +618,36 @@ export default function AdminPanel() {
       )}
 
       {loading && !checkingAll ? (
-        <div className="text-center py-12">
-          <LoadingSpinner size="lg" />
-          <p className="mt-4 text-muted-foreground">Loading domains...</p>
+        <div className="card overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-muted">
+                <tr>
+                  {[...Array(7)].map((_, i) => (
+                    <th key={i} className="p-3"><Skeleton className="h-4 w-24" /></th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {[...Array(10)].map((_, i) => (
+                  <tr key={i}>
+                    <td className="p-3">
+                      <div className="flex gap-3 items-center">
+                        <Skeleton className="h-4 w-4" />
+                        <div className="space-y-2">
+                          <Skeleton className="h-4 w-32" />
+                          <Skeleton className="h-3 w-48" />
+                        </div>
+                      </div>
+                    </td>
+                    {[...Array(6)].map((_, j) => (
+                      <td key={j} className="p-3"><Skeleton className="h-4 w-20" /></td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       ) : domains.length === 0 ? (
         <div className="card">

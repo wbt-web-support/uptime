@@ -5,7 +5,7 @@ import { createClient } from "@/utils/supabase/client";
 import StatusCard from "@/components/StatusCard";
 import DashboardHeader from "@/components/DashboardHeader";
 import StatsOverview from "@/components/StatsOverview";
-import LoadingSpinner from "@/components/LoadingSpinner";
+import { Skeleton } from "@/components/ui/skeleton";
 import { AlertTriangle, Grid, List, Clock, Lock, Globe, Server, ExternalLink } from "lucide-react";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 
@@ -279,9 +279,62 @@ export default function PublicDashboard() {
       )}
 
       {loading && domains.length === 0 ? (
-        <div className="py-20">
-          <LoadingSpinner size="lg" />
-        </div>
+        viewMode === "grid" ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 mt-6">
+            {[...Array(6)].map((_, i) => (
+              <div key={i} className="card p-6 h-[200px] flex flex-col justify-between">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-3">
+                    <Skeleton className="h-10 w-10 rounded-full" />
+                    <div>
+                      <Skeleton className="h-4 w-32 mb-2" />
+                      <Skeleton className="h-3 w-48" />
+                    </div>
+                  </div>
+                  <Skeleton className="h-6 w-20 rounded-full" />
+                </div>
+                <div className="space-y-3">
+                  <div className="flex justify-between">
+                    <Skeleton className="h-3 w-20" />
+                    <Skeleton className="h-3 w-12" />
+                  </div>
+                  <div className="flex justify-between">
+                    <Skeleton className="h-3 w-24" />
+                    <Skeleton className="h-3 w-12" />
+                  </div>
+                </div>
+                <div className="mt-4 pt-4 border-t flex justify-between">
+                  <Skeleton className="h-8 w-24 rounded-md" />
+                  <Skeleton className="h-8 w-24 rounded-md" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="mt-6">
+            <div className="overflow-x-auto border rounded-lg">
+              <div className="bg-muted/50 p-4 border-b flex items-center justify-between gap-4">
+                {[...Array(8)].map((_, i) => (
+                  <Skeleton key={i} className="h-4 flex-1" />
+                ))}
+              </div>
+              {[...Array(8)].map((_, i) => (
+                <div key={i} className="p-4 border-b flex items-center justify-between gap-4">
+                  <div className="flex-1 flex gap-3 items-center">
+                    <Skeleton className="h-8 w-8 rounded-full" />
+                    <div className="space-y-2">
+                      <Skeleton className="h-4 w-32" />
+                      <Skeleton className="h-3 w-48" />
+                    </div>
+                  </div>
+                  {[...Array(7)].map((_, j) => (
+                    <Skeleton key={j} className="h-4 flex-1" />
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
+        )
       ) : domains.length === 0 ? (
         <div className="card text-center py-16">
           <h3 className="text-xl font-medium mb-2">No domains found</h3>
