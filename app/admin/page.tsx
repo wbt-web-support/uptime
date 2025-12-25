@@ -520,24 +520,8 @@ export default function AdminPanel() {
         onAddClick={() => setShowAddForm(!showAddForm)}
         stats={stats}
         categoryStats={categoryStats}
-        rightContent={
-          <div className="flex items-center gap-4">
-            <Select
-              value={sortBy}
-              onValueChange={(value) => setSortBy(value as any)}
-            >
-              <SelectTrigger className="w-[180px]">
-                <SelectValue placeholder="Sort by" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="domain">Sort by Domain</SelectItem>
-                <SelectItem value="newest">Newest First</SelectItem>
-                <SelectItem value="oldest">Oldest First</SelectItem>
-              </SelectContent>
-            </Select>
-
-          </div>
-        }
+        sortBy={sortBy}
+        setSortBy={setSortBy as any}
       />
 
 

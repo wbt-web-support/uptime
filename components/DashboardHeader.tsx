@@ -1,5 +1,13 @@
-import { Search, Filter, Tag } from 'lucide-react';
-import { wrap } from 'module';
+import { Search, Filter, Tag, ChevronDown, ArrowUpDown, LayoutGrid, List } from 'lucide-react';
+import { Button } from './ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from './ui/dropdown-menu';
 import { ReactNode } from 'react';
 
 interface DashboardHeaderProps {
@@ -25,6 +33,10 @@ interface DashboardHeaderProps {
     domainExpiring: number;
   };
   categoryStats?: Record<string, number>;
+  sortBy?: string;
+  setSortBy?: (value: string) => void;
+  viewMode?: 'grid' | 'list';
+  setViewMode?: (mode: 'grid' | 'list') => void;
 }
 
 export default function DashboardHeader({
@@ -43,7 +55,11 @@ export default function DashboardHeader({
   onAddClick,
   rightContent,
   stats,
-  categoryStats
+  categoryStats,
+  sortBy,
+  setSortBy,
+  viewMode,
+  setViewMode
 }: DashboardHeaderProps) {
   const filters = [
     { id: 'all', name: 'All', color: 'bg-brand', count: stats?.total },
@@ -54,20 +70,21 @@ export default function DashboardHeader({
   ];
 
   return (
-    <div className="mb-8 animate-fade-in">
-      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-6">
-        <div className="flex items-center gap-2 w-full justify-between flex-col lg:flex-row">
+    <div className="mb-4 animate-fade-in">
+      <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-6 mb-4">
+        {/* Left side: Title and Stats */}
+        <div className="flex flex-col gap-1">
+          <h1 className="text-3xl font-bold text-foreground">{title}</h1>
+          {description && <p className="text-muted-foreground mt-1">{description}</p>}
+          {/* <div className="text-sm text-muted-foreground">
+            Showing {filteredCount} of {totalCount} domains
+          </div> */}
+        </div>
 
-          <div className="flex items-center flex-col gap-1 items-start text-left">
-
-            <h1 className="text-3xl font-bold text-foreground w-full">{title}</h1>
-            {description && <p className="text-muted-foreground mt-1 text-left w-full">{description}</p>}
-            <div className="text-sm text-muted-foreground text-left w-full">
-              Showing {filteredCount} of {totalCount} domains
-            </div>
-          </div>
-
-          <div className="lg:col-span-1 relative w-full lg:w-auto">
+        {/* Right side: Search, Filters, and Actions */}
+        <div className="flex flex-col sm:flex-row flex-wrap lg:justify-end items-center gap-3 w-full lg:w-auto">
+          {/* Search Bar */}
+          <div className="relative w-full sm:w-64">
             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
               <Search className="h-4 w-4 text-muted-foreground" />
             </div>
@@ -76,93 +93,150 @@ export default function DashboardHeader({
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search domains..."
-              className="w-full pl-10 py-2 px-3 border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand transition-colors bg-background"
+              className="w-full pl-10 py-2 px-3 border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand transition-colors bg-background text-sm h-9"
             />
           </div>
 
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            {/* Sort Dropdown */}
+            {setSortBy && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm" className="h-9 gap-2 flex-grow sm:flex-grow-0">
+                    <ArrowUpDown className="h-4 w-4" />
+                    <span>Sort: {sortBy === 'domain' ? 'Domain' : sortBy === 'newest' ? 'Newest' : sortBy === 'oldest' ? 'Oldest' : sortBy === 'status' ? 'Status' : 'Name'}</span>
+                    <ChevronDown className="h-4 w-4 opacity-50" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-48">
+                  <DropdownMenuLabel>Sort Options</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => setSortBy('domain')} className="cursor-pointer">
+                    Sort by Domain
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setSortBy('status')} className="cursor-pointer">
+                    Sort by Status
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setSortBy('newest')} className="cursor-pointer">
+                    Newest First
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setSortBy('oldest')} className="cursor-pointer">
+                    Oldest First
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
 
-        </div>
+            {/* Status Filter Dropdown */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" className="h-9 gap-2 flex-grow sm:flex-grow-0">
+                  <Filter className="h-4 w-4" />
+                  <span>Status: {filters.find(f => f.id === statusFilter)?.name || 'All'}</span>
+                  <ChevronDown className="h-4 w-4 opacity-50" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuLabel>Filter by Status</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                {filters.map((filter) => (
+                  <DropdownMenuItem
+                    key={filter.id}
+                    onClick={() => setStatusFilter(filter.id)}
+                    className="flex items-center justify-between cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2">
+                      <div className={`w-2 h-2 rounded-full ${filter.color}`} />
+                      <span>{filter.name}</span>
+                    </div>
+                    {filter.count !== undefined && (
+                      <span className="text-xs text-muted-foreground font-mono">
+                        {filter.count}
+                      </span>
+                    )}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
 
-        {isAdmin && (
-          <div>
-            <button
-              className="btn-brand"
-              style={{ textWrap: 'nowrap' }}
-              onClick={() => {
-                if (onAddClick) {
-                  onAddClick();
-                } else {
-                  document.getElementById('add-domain-form')?.scrollIntoView({ behavior: 'smooth' });
-                }
-              }}
-            >
-              Add New Domain
-            </button>
+            {/* Category Filter Dropdown */}
+            {categories.filter(c => c !== 'all').length > 0 && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm" className="h-9 gap-2 flex-grow sm:flex-grow-0">
+                    <Tag className="h-4 w-4" />
+                    <span>Category: {categoryFilter === 'all' ? 'Select...' : categoryFilter}</span>
+                    <ChevronDown className="h-4 w-4 opacity-50" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56">
+                  <DropdownMenuLabel>Filter by Category</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  {categories
+                    .filter(category => category !== 'all')
+                    .map((category) => (
+                      <DropdownMenuItem
+                        key={category}
+                        onClick={() => setCategoryFilter(category)}
+                        className="flex items-center justify-between cursor-pointer"
+                      >
+                        <span>{category}</span>
+                        {categoryStats && categoryStats[category] !== undefined && (
+                          <span className="text-xs text-muted-foreground font-mono">
+                            {categoryStats[category]}
+                          </span>
+                        )}
+                      </DropdownMenuItem>
+                    ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
           </div>
-        )}
 
-        {rightContent && (
-          <div>
-            {rightContent}
-          </div>
-        )}
-      </div>
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            {/* View Mode Toggle */}
+            {setViewMode && (
+              <div className="flex items-center bg-muted rounded-md p-0.5 h-9 border border-input">
+                <button
+                  onClick={() => setViewMode('grid')}
+                  className={`p-1 rounded ${viewMode === 'grid' ? 'bg-background shadow-sm text-brand' : 'text-muted-foreground hover:text-foreground'}`}
+                  title="Grid View"
+                >
+                  <LayoutGrid size={18} />
+                </button>
+                <button
+                  onClick={() => setViewMode('list')}
+                  className={`p-1 rounded ${viewMode === 'list' ? 'bg-background shadow-sm text-brand' : 'text-muted-foreground hover:text-foreground'}`}
+                  title="List View"
+                >
+                  <List size={18} />
+                </button>
+              </div>
+            )}
 
-      <div className="flex flex-wrap gap-y-4 gap-x-8 items-center">
-        <div className="flex flex-wrap gap-2 items-center">
-          <span className="flex items-center text-xs font-medium text-muted-foreground mr-2">
-            <Filter className="mr-2 h-4 w-4" />
-            Filter:
-          </span>
-
-          {filters.map((filter) => (
-            <button
-              key={filter.id}
-              onClick={() => setStatusFilter(filter.id)}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${statusFilter === filter.id
-                ? `${filter.color} text-white shadow-sm`
-                : 'bg-secondary text-foreground hover:bg-secondary/70'
-                }`}
-            >
-              {filter.name}
-              {filter.count !== undefined && (
-                <span className={`ml-2 inline-flex items-center justify-center px-1.5 py-0.5 rounded-full text-xs font-semibold ${statusFilter === filter.id ? 'bg-white/20 text-white' : 'bg-background/50 text-muted-foreground'
-                  }`}>
-                  {filter.count}
-                </span>
-              )}
-            </button>
-          ))}
-        </div>
-
-        {/* Category filters */}
-        {categories.length > 1 && (
-          <div className="flex flex-wrap gap-2 items-center">
-            <span className="flex items-center text-xs font-medium text-muted-foreground mr-2">
-              <Tag className="mr-2 h-4 w-4" />
-              Categories:
-            </span>
-
-            {categories.map((category) => (
+            {isAdmin && (
               <button
-                key={category}
-                onClick={() => setCategoryFilter(category)}
-                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors flex items-center gap-2 ${categoryFilter === category
-                  ? 'bg-brand text-white shadow-sm'
-                  : 'bg-secondary text-foreground hover:bg-secondary/70'
-                  }`}
+                className="btn-brand h-9 px-4 py-2 text-sm flex-grow sm:flex-grow-0"
+                style={{ textWrap: 'nowrap' }}
+                onClick={() => {
+                  if (onAddClick) {
+                    onAddClick();
+                  } else {
+                    document.getElementById('add-domain-form')?.scrollIntoView({ behavior: 'smooth' });
+                  }
+                }}
               >
-                {category === 'all' ? 'All' : category}
-                {categoryStats && categoryStats[category] !== undefined && (
-                  <span className={`inline-flex items-center justify-center px-1.5 py-0.5 rounded-full text-[10px] font-bold ${categoryFilter === category ? 'bg-white/20 text-white' : 'bg-background/50 text-muted-foreground'
-                    }`}>
-                    {categoryStats[category]}
-                  </span>
-                )}
+                Add New Domain
               </button>
-            ))}
+            )}
+
+            {rightContent && (
+              <div className="flex-grow sm:flex-grow-0">
+                {rightContent}
+              </div>
+            )}
           </div>
-        )}
+        </div>
       </div>
     </div>
   );

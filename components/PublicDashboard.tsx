@@ -247,47 +247,8 @@ export default function PublicDashboard() {
 
   return (
     <div className="container mx-auto py-0 px-0">
-      <div className="flex justify-between items-center mb-6">
-        <div className="flex items-center gap-4">
-          <h1 className="text-3xl font-bold">Domain Status</h1>
-          <div className="flex items-center gap-2 bg-muted rounded-md p-1">
-            <button
-              onClick={() => setViewMode("grid")}
-              className={`p-1.5 rounded-md ${viewMode === "grid" ? "bg-background shadow-sm" : "hover:bg-background/50"}`}
-              aria-label="Grid view"
-            >
-              <Grid size={16} />
-            </button>
-            <button
-              onClick={() => setViewMode("list")}
-              className={`p-1.5 rounded-md ${viewMode === "list" ? "bg-background shadow-sm" : "hover:bg-background/50"}`}
-              aria-label="List view"
-            >
-              <List size={16} />
-            </button>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <Select
-            value={sortBy}
-            onValueChange={(value) => setSortBy(value as any)}
-          >
-            <SelectTrigger className="w-[180px]">
-              <SelectValue placeholder="Sort by" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="domain">Sort by Domain</SelectItem>
-              <SelectItem value="newest">Newest First</SelectItem>
-              <SelectItem value="oldest">Oldest First</SelectItem>
-              <SelectItem value="status">Status</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
-
       <DashboardHeader
-        title=""
+        title="Domain Status"
         description="Monitor the status of domains, SSL certificates, and domain expiry dates"
         searchQuery={searchQuery}
         setSearchQuery={setSearchQuery}
@@ -300,6 +261,10 @@ export default function PublicDashboard() {
         filteredCount={filteredDomains.length}
         stats={stats}
         categoryStats={categoryStats}
+        sortBy={sortBy}
+        setSortBy={setSortBy as any}
+        viewMode={viewMode}
+        setViewMode={setViewMode}
       />
 
       {/* {domains.length > 0 && <StatsOverview domains={domains} />} */}
