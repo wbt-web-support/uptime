@@ -1,4 +1,4 @@
-import { Search, Filter, Tag, ChevronDown, ArrowUpDown, LayoutGrid, List } from 'lucide-react';
+import { Search, Filter, Tag, ChevronDown, ArrowUpDown, LayoutGrid, List, X } from 'lucide-react';
 import { Button } from './ui/button';
 import {
   DropdownMenu,
@@ -165,31 +165,47 @@ export default function DashboardHeader({
                 <DropdownMenuTrigger asChild>
                   <Button variant="outline" size="sm" className="h-9 gap-2 flex-grow sm:flex-grow-0">
                     <Tag className="h-4 w-4" />
-                    <span>Category: {categoryFilter === 'all' ? 'Select...' : categoryFilter}</span>
+                    <span>Category: {categoryFilter === 'all' ? 'All' : categoryFilter}</span>
                     <ChevronDown className="h-4 w-4 opacity-50" />
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-56">
                   <DropdownMenuLabel>Filter by Category</DropdownMenuLabel>
                   <DropdownMenuSeparator />
-                  {categories
-                    .filter(category => category !== 'all')
-                    .map((category) => (
-                      <DropdownMenuItem
-                        key={category}
-                        onClick={() => setCategoryFilter(category)}
-                        className="flex items-center justify-between cursor-pointer"
-                      >
-                        <span>{category}</span>
-                        {categoryStats && categoryStats[category] !== undefined && (
-                          <span className="text-xs text-muted-foreground font-mono">
-                            {categoryStats[category]}
-                          </span>
-                        )}
-                      </DropdownMenuItem>
-                    ))}
+                  {categories.map((category) => (
+                    <DropdownMenuItem
+                      key={category}
+                      onClick={() => setCategoryFilter(category)}
+                      className="flex items-center justify-between cursor-pointer"
+                    >
+                      <span className="capitalize">{category === 'all' ? 'All' : category}</span>
+                      {categoryStats && categoryStats[category] !== undefined && (
+                        <span className="text-xs text-muted-foreground font-mono">
+                          {categoryStats[category]}
+                        </span>
+                      )}
+                    </DropdownMenuItem>
+                  ))}
                 </DropdownMenuContent>
               </DropdownMenu>
+            )}
+
+            {/* Clear Filters Button */}
+            {(statusFilter !== 'all' || categoryFilter !== 'all' || searchQuery !== '') && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setStatusFilter('all');
+                  if (setCategoryFilter) setCategoryFilter('all');
+                  setSearchQuery('');
+                }}
+                className="h-9 px-2 text-muted-foreground hover:text-foreground"
+                title="Clear all filters"
+              >
+                <X className="h-4 w-4 mr-1" />
+                <span className="text-xs font-medium">Clear</span>
+              </Button>
             )}
           </div>
 
