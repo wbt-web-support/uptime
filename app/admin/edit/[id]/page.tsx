@@ -19,7 +19,7 @@ export default function EditDomain() {
     domain_name: "",
     display_name: "",
     uptime_url: "",
-    category: "Live Website",
+    category: "none",
   });
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -28,6 +28,7 @@ export default function EditDomain() {
   
   // Default categories
   const defaultCategories = [
+    "none",
     "Live Website",
     "Live Website Temporary Suspended",
     "Migration Done",
@@ -74,7 +75,7 @@ export default function EditDomain() {
             domain_name: data.domain_name || "",
             display_name: data.display_name || "",
             uptime_url: data.uptime_url || "",
-            category: data.category || "Live Website",
+            category: data.category || "none",
           });
         }
       } catch (error: any) {
@@ -125,7 +126,7 @@ export default function EditDomain() {
     
     // If the removed category was selected, reset to first category
     if (formData.category === categoryToRemove) {
-      setFormData(prev => ({ ...prev, category: updatedCategories[0] || "Live Website" }));
+      setFormData(prev => ({ ...prev, category: updatedCategories[0] || "none" }));
     }
   };
 

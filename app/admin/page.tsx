@@ -25,7 +25,7 @@ export default function AdminPanel() {
   const [sortBy, setSortBy] = useState<"newest" | "oldest" | "domain" | "status-asc" | "status-desc" | "ssl-asc" | "ssl-desc" | "expiry-asc" | "expiry-desc" | "category-asc" | "category-desc">("domain");
   const [selectedDomains, setSelectedDomains] = useState<string[]>([]);
   const [selectAll, setSelectAll] = useState(false);
-  const [selectedCategory, setSelectedCategory] = useState<string>("Live Website");
+  const [selectedCategory, setSelectedCategory] = useState<string>("none");
   const [checkResults, setCheckResults] = useState<{
     successes: number;
     failures: number;
@@ -174,6 +174,7 @@ export default function AdminPanel() {
   // Function to get category color classes
   const getCategoryColor = (category: string) => {
     const colorMap: Record<string, string> = {
+      "none": "bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400",
       "Live Website": "bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400",
       "Live Website Temporary Suspended": "bg-purple-100 text-purple-800 dark:bg-purple-900/20 dark:text-purple-400",
       "Migration Done": "bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400",
@@ -188,6 +189,7 @@ export default function AdminPanel() {
   // Function to get short display name for category
   const getCategoryDisplayName = (category: string) => {
     const shortNames: Record<string, string> = {
+      "none": "none",
       "Live Website": "Live",
       "Live Website Temporary Suspended": "Temp Suspended",
       "Migration Done": "Migration Done",
@@ -570,6 +572,7 @@ export default function AdminPanel() {
                   <SelectValue placeholder="Select category" />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="none">none</SelectItem>
                   <SelectItem value="Live Website">Live Website</SelectItem>
                   <SelectItem value="Live Website Temporary Suspended">Live Website Temporary Suspended</SelectItem>
                   <SelectItem value="Migration Done">Migration Done</SelectItem>
@@ -581,7 +584,7 @@ export default function AdminPanel() {
               <button
                 onClick={updateSelectedDomainsCategory}
                 className="btn btn-secondary flex items-center gap-2"
-                disabled={loading}
+                disabled={loading || selectedCategory === "none"}
               >
                 Update Category
               </button>
