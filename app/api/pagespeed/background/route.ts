@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/utils/supabase/server";
+import { normalizeUrl, runAndSavePageSpeed } from "@/utils/pagespeed";
 
 // Background PageSpeed test endpoint
 // Starts the test and returns immediately, test runs in background
@@ -27,10 +28,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Normalize URL first to ensure consistency
-    let normalizedUrl = url.trim();
-    if (!normalizedUrl.startsWith('http://') && !normalizedUrl.startsWith('https://')) {
-      normalizedUrl = `https://${normalizedUrl}`;
-    }
+    const normalizedUrl = normalizeUrl(url);
 
     // Mark test as queued in database (use normalized URL)
     const { error: queueError } = await supabase
@@ -53,7 +51,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Start background test (don't await) - pass normalized URL
-    runPageSpeedTestInBackground(domainId, normalizedUrl, strategy).catch(err => {
+    runAndSavePageSpeed(supabase as any, domainId, normalizedUrl, strategy).catch(err => {
       console.error(`Background PageSpeed test failed for ${normalizedUrl}:`, err);
     });
 
@@ -74,194 +72,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-
-// Background function to run PageSpeed test
-async function runPageSpeedTestInBackground(domainId: string, url: string, strategy: 'mobile' | 'desktop') {
-  const supabase = await createClient();
-  
-  try {
-    // Normalize URL
-    let normalizedUrl = url.trim();
-    if (!normalizedUrl.startsWith('http://') && !normalizedUrl.startsWith('https://')) {
-      normalizedUrl = `https://${normalizedUrl}`;
-    }
-
-    // Validate URL
-    try {
-      new URL(normalizedUrl);
-    } catch {
-      throw new Error(`Invalid URL format: ${url}`);
-    }
-
-    const apiKey = process.env.PAGESPEED_INSIGHTS_API_KEY;
-    if (!apiKey) {
-      throw new Error("PageSpeed Insights API key not configured");
-    }
-
-    // Request all categories so we can populate scores for performance, accessibility, best-practices, and SEO
-    const pagespeedUrl = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(normalizedUrl)}&strategy=${strategy}&category=performance&category=accessibility&category=best-practices&category=seo&key=${apiKey}`;
-    
-    const response = await fetch(pagespeedUrl, {
-      cache: 'no-store',
-    });
-
-    if (!response.ok) {
-      let errorText = '';
-      let errorData = null;
-      
-      try {
-        errorText = await response.text();
-        try {
-          errorData = JSON.parse(errorText);
-        } catch {}
-      } catch {}
-
-      const errorMessage = errorData?.error?.message || errorText || `PageSpeed API error: ${response.status}`;
-      throw new Error(errorMessage);
-    }
-
-    const apiData = await response.json();
-
-    if (apiData.error) {
-      throw new Error(apiData.error.message || 'PageSpeed API error');
-    }
-
-    if (!apiData.lighthouseResult) {
-      throw new Error('Invalid response from PageSpeed API');
-    }
-
-    const lighthouseResult = apiData.lighthouseResult;
-    const categories = lighthouseResult.categories;
-    const audits = lighthouseResult.audits;
-
-    if (!categories || !audits) {
-      throw new Error('Invalid response structure from PageSpeed API');
-    }
-
-    // Log category scores for debugging
-    console.log('📊 Category scores from API:', {
-      performance: categories.performance?.score,
-      accessibility: categories.accessibility?.score,
-      'best-practices': categories['best-practices']?.score,
-      seo: categories.seo?.score,
-      allCategories: Object.keys(categories)
-    });
-
-    // Extract scores - convert from 0-1 scale to 0-100, or null if not available
-    const getScore = (score: number | null | undefined): number | null => {
-      if (score === null || score === undefined) {
-        return null;
-      }
-      return Math.round(score * 100);
-    };
-
-    const performanceScore = getScore(categories.performance?.score);
-    const accessibilityScore = getScore(categories.accessibility?.score);
-    const bestPracticesScore = getScore(categories['best-practices']?.score);
-    const seoScore = getScore(categories.seo?.score);
-
-    console.log('📊 Extracted scores:', {
-      performance: performanceScore,
-      accessibility: accessibilityScore,
-      bestPractices: bestPracticesScore,
-      seo: seoScore
-    });
-
-    const firstContentfulPaint = audits['first-contentful-paint']?.numericValue || null;
-    const largestContentfulPaint = audits['largest-contentful-paint']?.numericValue || null;
-    const totalBlockingTime = audits['total-blocking-time']?.numericValue || null;
-    const cumulativeLayoutShift = audits['cumulative-layout-shift']?.numericValue || null;
-    const speedIndex = audits['speed-index']?.numericValue || null;
-    const timeToInteractive = audits['interactive']?.numericValue || null;
-
-    // Save results to database
-    const resultData = {
-      domain_id: domainId,
-      url: normalizedUrl,
-      strategy: strategy,
-      performance_score: performanceScore,
-      accessibility_score: accessibilityScore,
-      best_practices_score: bestPracticesScore,
-      seo_score: seoScore,
-      first_contentful_paint: firstContentfulPaint,
-      largest_contentful_paint: largestContentfulPaint,
-      total_blocking_time: totalBlockingTime,
-      cumulative_layout_shift: cumulativeLayoutShift,
-      speed_index: speedIndex,
-      time_to_interactive: timeToInteractive,
-      raw_data: apiData,
-    };
-
-    console.log(`💾 Attempting to save result for ${normalizedUrl}...`, {
-      domain_id: domainId,
-      url: normalizedUrl,
-      strategy,
-      performance_score: performanceScore
-    });
-
-    const { data: savedData, error: saveError } = await supabase
-      .from("pagespeed_results")
-      .upsert(resultData, {
-        onConflict: 'domain_id,url,strategy',
-        ignoreDuplicates: false,
-      })
-      .select();
-
-    if (saveError) {
-      console.error(`❌ Error saving PageSpeed result for ${normalizedUrl}:`, saveError);
-      console.error('Error details:', JSON.stringify(saveError, null, 2));
-      console.error('Result data that failed to save:', JSON.stringify(resultData, null, 2));
-      
-      // Try to check if table exists
-      const { error: tableCheckError } = await supabase
-        .from("pagespeed_results")
-        .select("id")
-        .limit(1);
-      
-      if (tableCheckError) {
-        console.error('❌ Table check failed - table may not exist:', tableCheckError);
-        console.error('⚠️ Please run the migration: migrations/add_pagespeed_results_table.sql');
-      }
-      
-      throw saveError;
-    }
-
-    if (!savedData || savedData.length === 0) {
-      console.warn(`⚠️ No data returned after upsert for ${normalizedUrl}`);
-    } else {
-      console.log(`✅ Background PageSpeed test completed and saved for ${normalizedUrl}`, {
-        performance_score: performanceScore,
-        saved: true,
-        record_id: savedData[0]?.id,
-        record_count: savedData.length
-      });
-    }
-
-  } catch (error: any) {
-    console.error(`Background PageSpeed test error for ${url}:`, error);
-    
-    // Normalize URL for error update
-    let normalizedUrl = url.trim();
-    if (!normalizedUrl.startsWith('http://') && !normalizedUrl.startsWith('https://')) {
-      normalizedUrl = `https://${normalizedUrl}`;
-    }
-    
-    // Save error state to database
-    try {
-      await supabase
-        .from("pagespeed_results")
-        .upsert({
-          domain_id: domainId,
-          url: normalizedUrl,
-          strategy: strategy,
-          performance_score: -1, // Use -1 to indicate error
-          tested_at: new Date().toISOString(),
-        }, {
-          onConflict: 'domain_id,url,strategy',
-        });
-    } catch (dbError) {
-      console.error("Error saving error state to database:", dbError);
-    }
-  }
-}
-
