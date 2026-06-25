@@ -6,7 +6,7 @@ import { createClient } from "@/utils/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Gauge, Globe, ExternalLink, AlertCircle, Search, Plus, X, Trash2, Link as LinkIcon, RefreshCw, CheckCircle, Clock, Table as TableIcon, LayoutGrid } from "lucide-react";
+import { Gauge, Globe, ExternalLink, AlertCircle, Search, Plus, X, Trash2, Link as LinkIcon, RefreshCw, CheckCircle, Clock, Table as TableIcon, LayoutGrid, Smartphone, Monitor } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -49,6 +49,8 @@ export default function SpeedTestPage() {
     timestamp: number;
   }>>({});
   const [latestResults, setLatestResults] = useState<Record<string, any>>({});
+  const [mobileResults, setMobileResults] = useState<Record<string, any>>({});
+  const [desktopResults, setDesktopResults] = useState<Record<string, any>>({});
   const [selectedDomains, setSelectedDomains] = useState<Set<string>>(new Set());
   const [analyzingBatch, setAnalyzingBatch] = useState(false);
   const [analysisLog, setAnalysisLog] = useState<
@@ -145,6 +147,9 @@ export default function SpeedTestPage() {
       if (resultsError) throw resultsError;
 
       const map: Record<string, any> = {};
+      const mobileMap: Record<string, any> = {};
+      const desktopMap: Record<string, any> = {};
+      // data is ordered tested_at desc, so the first row seen per key is newest.
       (data || []).forEach((row: any) => {
         // Prefer newest mobile result; if none, take newest overall
         if (!map[row.domain_id]) {
@@ -152,9 +157,18 @@ export default function SpeedTestPage() {
         } else if (map[row.domain_id].strategy !== "mobile" && row.strategy === "mobile") {
           map[row.domain_id] = row;
         }
+
+        // Newest result per domain for each strategy independently
+        if (row.strategy === "mobile" && !mobileMap[row.domain_id]) {
+          mobileMap[row.domain_id] = row;
+        } else if (row.strategy === "desktop" && !desktopMap[row.domain_id]) {
+          desktopMap[row.domain_id] = row;
+        }
       });
 
       setLatestResults(map);
+      setMobileResults(mobileMap);
+      setDesktopResults(desktopMap);
     } catch (err: any) {
       console.error("Error fetching latest PageSpeed results:", err);
     } finally {
@@ -590,6 +604,130 @@ export default function SpeedTestPage() {
   const isResultRunning = (row: any) => !!row && row.performance_score === null;
   const isResultError = (row: any) => !!row && row.performance_score !== null && row.performance_score < 0;
 
+  const scoreColorClass = (score: number | null | undefined) => {
+    if (score === null || score === undefined) return "text-muted-foreground";
+    if (score >= 90) return "text-green-600 dark:text-green-400";
+    if (score >= 50) return "text-amber-600 dark:text-amber-400";
+    return "text-red-600 dark:text-red-400";
+  };
+
+  // Compact mobile/desktop "last analyzed" pair shown on each domain card/row
+  const LastAnalysisPair = ({ domainId, compact = false }: { domainId: string; compact?: boolean }) => {
+    const m = mobileResults[domainId];
+    const d = desktopResults[domainId];
+    const cell = (icon: React.ReactNode, label: string, row: any) => (
+      <div className={compact ? "flex items-center gap-1.5" : "flex-1 border rounded-md p-2 bg-muted/30"}>
+        <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
+          {icon}
+          {!compact && <span>{label}</span>}
+        </div>
+        <div className={compact ? "text-[11px]" : "text-xs font-medium mt-0.5"}>
+          {row?.tested_at ? (
+            <span title={new Date(row.tested_at).toLocaleString()}>
+              {new Date(row.tested_at).toLocaleDateString()}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">Not tested</span>
+          )}
+        </div>
+      </div>
+    );
+
+    if (compact) {
+      return (
+        <div className="flex flex-col gap-0.5">
+          {cell(<Smartphone className="h-3 w-3" />, "Mobile", m)}
+          {cell(<Monitor className="h-3 w-3" />, "Desktop", d)}
+        </div>
+      );
+    }
+
+    return (
+      <div className="flex gap-2">
+        {cell(<Smartphone className="h-3 w-3" />, "Mobile", m)}
+        {cell(<Monitor className="h-3 w-3" />, "Desktop", d)}
+      </div>
+    );
+  };
+
+  const timeAgo = (date: Date | null) => {
+    if (!date) return "Never";
+    const diff = Date.now() - date.getTime();
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return `${mins} min ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs} hour${hrs > 1 ? "s" : ""} ago`;
+    const days = Math.floor(hrs / 24);
+    return `${days} day${days > 1 ? "s" : ""} ago`;
+  };
+
+  // Per-strategy stats: average score, coverage, distribution, last analysis date
+  const strategyStats = (resultMap: Record<string, any>) => {
+    const rows = Object.values(resultMap) as any[];
+    const analyzed = rows.filter((r) => r && r.performance_score !== null && r.performance_score >= 0);
+    const scores = analyzed.map((r) => r.performance_score as number);
+    const avg = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : null;
+
+    let last: Date | null = null;
+    for (const r of rows) {
+      if (r?.tested_at) {
+        const d = new Date(r.tested_at);
+        if (!last || d > last) last = d;
+      }
+    }
+
+    return {
+      analyzed: analyzed.length,
+      avg,
+      good: scores.filter((s) => s >= 90).length,
+      needsWork: scores.filter((s) => s >= 50 && s < 90).length,
+      poor: scores.filter((s) => s < 50).length,
+      errored: rows.filter((r) => r && r.performance_score !== null && r.performance_score < 0).length,
+      last,
+    };
+  };
+
+  // Average a Lighthouse score field across all valid rows from both strategies
+  const avgField = (field: string) => {
+    const rows = [...Object.values(mobileResults), ...Object.values(desktopResults)] as any[];
+    const vals = rows
+      .filter((r) => r && r.performance_score >= 0 && r[field] !== null && r[field] !== undefined && r[field] >= 0)
+      .map((r) => r[field] as number);
+    return vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : null;
+  };
+
+  // Aggregate summary across both strategies
+  const summary = (() => {
+    const mobile = strategyStats(mobileResults);
+    const desktop = strategyStats(desktopResults);
+
+    // Last analysis = most recent run across mobile AND desktop
+    const dates = [mobile.last, desktop.last].filter(Boolean) as Date[];
+    const lastAnalysis = dates.length ? new Date(Math.max(...dates.map((d) => d.getTime()))) : null;
+
+    // A domain counts as analyzed if it has a valid score in either strategy
+    const analyzedIds = new Set<string>();
+    for (const [id, r] of Object.entries(mobileResults)) {
+      if (r && (r as any).performance_score >= 0) analyzedIds.add(id);
+    }
+    for (const [id, r] of Object.entries(desktopResults)) {
+      if (r && (r as any).performance_score >= 0) analyzedIds.add(id);
+    }
+
+    return {
+      total: domains.length,
+      analyzed: analyzedIds.size,
+      pending: domains.length - analyzedIds.size,
+      mobile,
+      desktop,
+      lastAnalysis,
+      avgAccessibility: avgField("accessibility_score"),
+      avgBestPractices: avgField("best_practices_score"),
+      avgSeo: avgField("seo_score"),
+    };
+  })();
+
   const parseUrls = (urlString: string): string[] => {
     // Split by newlines, commas, or spaces, then filter and trim
     return urlString
@@ -842,6 +980,102 @@ export default function SpeedTestPage() {
           Test the speed and performance of all monitored domains
         </p>
       </div>
+
+      {/* Performance summary */}
+      {domains.length > 0 && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+          <Card>
+            <CardContent className="p-5">
+              <div className="flex items-center gap-2 text-muted-foreground mb-1">
+                <Globe className="h-4 w-4" />
+                <span className="text-sm font-medium">Domains</span>
+              </div>
+              <div className="text-3xl font-bold">{summary.total}</div>
+              <div className="text-xs text-muted-foreground mt-1">
+                {summary.analyzed} analyzed · {summary.pending} pending
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="p-5">
+              <div className="flex items-center gap-2 text-muted-foreground mb-2">
+                <Gauge className="h-4 w-4" />
+                <span className="text-sm font-medium">Avg Performance</span>
+              </div>
+              <div className="flex items-center gap-6">
+                <div>
+                  <div className={`text-3xl font-bold ${scoreColorClass(summary.mobile.avg)}`}>
+                    {summary.mobile.avg ?? "N/A"}
+                  </div>
+                  <div className="text-[10px] text-muted-foreground uppercase mt-0.5">
+                    Mobile · {summary.mobile.analyzed}
+                  </div>
+                </div>
+                <div className="border-l border-border pl-6">
+                  <div className={`text-3xl font-bold ${scoreColorClass(summary.desktop.avg)}`}>
+                    {summary.desktop.avg ?? "N/A"}
+                  </div>
+                  <div className="text-[10px] text-muted-foreground uppercase mt-0.5">
+                    Desktop · {summary.desktop.analyzed}
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="p-5">
+              <div className="flex items-center gap-2 text-muted-foreground mb-2">
+                <CheckCircle className="h-4 w-4" />
+                <span className="text-sm font-medium">Health Breakdown</span>
+              </div>
+              {([
+                { label: "Mobile", s: summary.mobile },
+                { label: "Desktop", s: summary.desktop },
+              ] as const).map(({ label, s }) => (
+                <div key={label} className="flex items-center justify-between gap-2 mb-1.5 last:mb-0">
+                  <span className="text-xs font-medium text-muted-foreground w-14">{label}</span>
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm font-bold text-green-600 dark:text-green-400" title="Good (90+)">{s.good}</span>
+                    <span className="text-sm font-bold text-amber-600 dark:text-amber-400" title="Needs work (50-89)">{s.needsWork}</span>
+                    <span className="text-sm font-bold text-red-600 dark:text-red-400" title="Poor (<50)">{s.poor}</span>
+                    {s.errored > 0 && (
+                      <span className="text-sm font-bold text-muted-foreground" title="Errors">{s.errored}</span>
+                    )}
+                  </div>
+                </div>
+              ))}
+              <div className="flex items-center justify-end gap-3 mt-1 text-[10px] text-muted-foreground uppercase">
+                <span className="text-green-600 dark:text-green-400">Good</span>
+                <span className="text-amber-600 dark:text-amber-400">Needs</span>
+                <span className="text-red-600 dark:text-red-400">Poor</span>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="p-5">
+              <div className="flex items-center gap-2 text-muted-foreground mb-2">
+                <CheckCircle className="h-4 w-4" />
+                <span className="text-sm font-medium">Avg Scores</span>
+              </div>
+              <div className="space-y-1.5">
+                {([
+                  { label: "Accessibility", value: summary.avgAccessibility },
+                  { label: "Best Practices", value: summary.avgBestPractices },
+                  { label: "SEO", value: summary.avgSeo },
+                ] as const).map(({ label, value }) => (
+                  <div key={label} className="flex items-center justify-between">
+                    <span className="text-xs text-muted-foreground">{label}</span>
+                    <span className={`text-sm font-bold ${scoreColorClass(value)}`}>{value ?? "N/A"}</span>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       {showAddDomain && (
         <div id="add-domain-form" className="mb-8">
@@ -1230,6 +1464,7 @@ export default function SpeedTestPage() {
                 <th className="text-left px-4 py-2 border-b">FCP</th>
                 <th className="text-left px-4 py-2 border-b">Speed Index</th>
                 <th className="text-left px-4 py-2 border-b">TTI</th>
+                <th className="text-left px-4 py-2 border-b">Last Analysis</th>
                 <th className="text-left px-4 py-2 border-b">Actions</th>
               </tr>
             </thead>
@@ -1309,6 +1544,9 @@ export default function SpeedTestPage() {
                       {isResultRunning(latest) || isResultError(latest)
                         ? "—"
                         : formatMs(latest?.time_to_interactive)}
+                    </td>
+                    <td className="px-4 py-2 border-b" onClick={(e) => e.stopPropagation()}>
+                      <LastAnalysisPair domainId={domain.id} compact />
                     </td>
                     <td className="px-4 py-2 border-b">
                       <Button
@@ -1418,13 +1656,16 @@ export default function SpeedTestPage() {
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-3">
+                    <div>
+                      <div className="text-[11px] font-semibold text-muted-foreground mb-1 uppercase tracking-wide">
+                        Last Analysis
+                      </div>
+                      <LastAnalysisPair domainId={domain.id} />
+                    </div>
                     {latest && (
                       <div className="border rounded-md p-3 bg-muted/40">
                         <div className="flex items-center justify-between mb-2">
                           <span className="text-xs font-semibold">Latest Analysis ({latest.strategy})</span>
-                          <span className="text-[11px] text-muted-foreground">
-                            {latest.tested_at ? new Date(latest.tested_at).toLocaleString() : ""}
-                          </span>
                         </div>
                         <div className="grid grid-cols-2 gap-2 text-xs">
                           <div className="flex justify-between">
