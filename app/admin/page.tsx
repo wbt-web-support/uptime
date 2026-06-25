@@ -9,8 +9,10 @@ import DashboardHeader from "@/components/DashboardHeader";
 import StatsOverview from "@/components/StatsOverview";
 import DomainActions from "@/components/DomainActions";
 import { Skeleton } from "@/components/ui/skeleton";
-import { AlertTriangle, Clock, CheckCircle, RefreshCw, Activity, Shield, Globe, Server, ExternalLink, Trash2, ArrowUp, ArrowDown, ChevronsUpDown, ChevronLeft, ChevronRight, X } from "lucide-react";
+import { AlertTriangle, Clock, CheckCircle, RefreshCw, Activity, Shield, Globe, Server, ExternalLink, Trash2, ArrowUp, ArrowDown, ChevronsUpDown, ChevronLeft, ChevronRight, X, Download, FileText, FileJson, FileType } from "lucide-react";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
+import { exportRows, domainToExportRow, type ExportFormat } from "@/utils/export";
 
 export default function AdminPanel() {
   const [domains, setDomains] = useState<any[]>([]);
@@ -396,6 +398,15 @@ export default function AdminPanel() {
     }
   };
 
+  const exportSelectedDomains = (format: ExportFormat) => {
+    if (selectedDomains.length === 0) return;
+    const selected = domains.filter(domain => selectedDomains.includes(domain.id));
+    const rows = selected.map(domainToExportRow);
+    const stamp = new Date().toISOString().slice(0, 10);
+    exportRows(format, rows, `domains-export-${stamp}`, "Domain Monitoring Export");
+    setSuccess(`Exported ${rows.length} ${rows.length === 1 ? 'domain' : 'domains'} as ${format.toUpperCase()}`);
+  };
+
   const checkSelectedDomains = async () => {
     if (selectedDomains.length === 0) return;
 
@@ -599,6 +610,27 @@ export default function AdminPanel() {
                 <X size={16} />
                 Unselect
               </button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button className="btn btn-secondary flex items-center gap-2" disabled={loading}>
+                    <Download size={16} />
+                    Export
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-44">
+                  <DropdownMenuLabel>Export {selectedDomains.length} selected</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => exportSelectedDomains("csv")} className="gap-2 cursor-pointer">
+                    <FileText size={16} /> CSV
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => exportSelectedDomains("pdf")} className="gap-2 cursor-pointer">
+                    <FileType size={16} /> PDF
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => exportSelectedDomains("json")} className="gap-2 cursor-pointer">
+                    <FileJson size={16} /> JSON
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
               <button
                 onClick={checkSelectedDomains}
                 className="btn btn-secondary flex items-center gap-2"
