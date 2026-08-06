@@ -191,6 +191,7 @@ export default function GTmetrixPage() {
   const [runError, setRunError] = useState("");
   const [credits, setCredits] = useState<number | null>(null);
   const [configured, setConfigured] = useState<boolean | null>(null);
+  const [locationName, setLocationName] = useState<string | null>(null);
 
   const supabase = useRef(createClient()).current;
   const router = useRouter();
@@ -221,6 +222,7 @@ export default function GTmetrixPage() {
       .then((d) => {
         setConfigured(!!d.configured);
         setCredits(typeof d.credits === "number" ? d.credits : null);
+        setLocationName(d.location?.name || null);
       })
       .catch(() => setConfigured(null));
   }, [authChecked, supabase]);
@@ -318,7 +320,7 @@ export default function GTmetrixPage() {
       </div>
       <p className="mb-6 flex items-center gap-1.5 text-sm text-muted-foreground">
         <MapPin className="h-3.5 w-3.5" />
-        Tests run from London, UK · one credit-costing test per click, no bulk runs
+        Tests run from {locationName || "London, UK"} · one credit-costing test per click, no bulk runs
       </p>
 
       {configured === false && (

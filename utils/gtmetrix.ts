@@ -41,6 +41,21 @@ export async function getGTmetrixCredits(): Promise<number | null> {
   }
 }
 
+// Resolve the configured location id to its human name via the account's
+// available locations (ids are account-specific per GTmetrix docs). Returns
+// null if the id isn't available to this account — the UI surfaces that.
+export async function getGTmetrixLocationName(): Promise<string | null> {
+  try {
+    const res = await gtFetch("/locations");
+    if (!res.ok) return null;
+    const json = await res.json();
+    const match = (json?.data || []).find((l: any) => String(l.id) === GTMETRIX_LOCATION);
+    return match?.attributes?.name || null;
+  } catch {
+    return null;
+  }
+}
+
 export async function runAndSaveGTmetrix(
   supabase: SupabaseClient,
   resultId: string,

@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { createClient } from "@/utils/supabase/server";
 import { createAdminClient, normalizeUrl } from "@/utils/pagespeed";
-import { getGTmetrixCredits, runAndSaveGTmetrix, GTMETRIX_LOCATION } from "@/utils/gtmetrix";
+import {
+  getGTmetrixCredits,
+  getGTmetrixLocationName,
+  runAndSaveGTmetrix,
+  GTMETRIX_LOCATION,
+} from "@/utils/gtmetrix";
 
 // On-demand GTmetrix test endpoint. One URL per request — GTmetrix credits are
 // paid, so this is deliberately never called in bulk or from the cron. Each run
@@ -81,8 +86,12 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   if (!process.env.GTMETRIX_API_KEY) {
-    return NextResponse.json({ configured: false, credits: null });
+    return NextResponse.json({ configured: false, credits: null, location: null });
   }
-  const credits = await getGTmetrixCredits();
-  return NextResponse.json({ configured: true, credits });
+  const [credits, locationName] = await Promise.all([getGTmetrixCredits(), getGTmetrixLocationName()]);
+  return NextResponse.json({
+    configured: true,
+    credits,
+    location: { id: GTMETRIX_LOCATION, name: locationName },
+  });
 }
