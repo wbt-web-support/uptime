@@ -18,6 +18,7 @@ import {
   Smartphone,
   Monitor,
   AlertCircle,
+  Zap,
 } from "lucide-react";
 
 interface Domain {
@@ -347,6 +348,11 @@ export default function SpeedTestPage() {
           </p>
         </div>
         <div className="flex gap-2">
+          <Button variant="outline" asChild>
+            <Link href="/gtmetrix">
+              <Zap className="mr-1.5 h-4 w-4" /> GTmetrix
+            </Link>
+          </Button>
           <div className="relative">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input

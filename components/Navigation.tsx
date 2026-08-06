@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Menu, X, ChevronsUp, Shield, Home, User, Bell, Gauge } from "lucide-react"; 
+import { Menu, X, ChevronsUp, Shield, Home, User, Bell, Gauge, Zap } from "lucide-react"; 
 import { createClient } from "@/utils/supabase/client";
 import { cn } from "@/lib/utils";
 import { signOutAction } from "@/app/actions";
@@ -58,6 +58,7 @@ export default function Navigation() {
   const navigationItems = [
     { name: "Home", href: "/", icon: Home, requiredAuth: false },
     { name: "Speed Test", href: "/speed-test", icon: Gauge, requiredAuth: true },
+    { name: "GTmetrix", href: "/gtmetrix", icon: Zap, requiredAuth: true },
     { name: "Admin", href: "/admin", icon: Shield, requiredAuth: true },
     { name: "Notifications", href: "/admin/notifications", icon: Bell, requiredAuth: true },
   ];
