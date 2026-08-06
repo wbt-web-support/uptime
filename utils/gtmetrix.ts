@@ -41,6 +41,12 @@ export async function getGTmetrixCredits(): Promise<number | null> {
   }
 }
 
+// Fetch an authenticated GTmetrix report resource (screenshot etc.) by its
+// absolute URL from the report's links. Used by the screenshot proxy route.
+export async function fetchGTmetrixResource(url: string): Promise<Response> {
+  return fetch(url, { headers: { Authorization: authHeader() }, cache: "no-store" });
+}
+
 // Resolve the configured location id to its human name via the account's
 // available locations (ids are account-specific per GTmetrix docs). Returns
 // null if the id isn't available to this account — the UI surfaces that.

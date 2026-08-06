@@ -70,25 +70,35 @@ function scoreColor(score: number | null | undefined): string {
   return "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-400";
 }
 
-const DETAIL_METRICS: Array<{ key: keyof GTRow; label: string; fmt: (v: any) => string }> = [
-  { key: "first_contentful_paint", label: "First Contentful Paint", fmt: fmtMs },
-  { key: "largest_contentful_paint", label: "Largest Contentful Paint", fmt: fmtMs },
-  { key: "total_blocking_time", label: "Total Blocking Time", fmt: fmtMs },
+// GTmetrix's own good/needs-improvement thresholds per metric, so values get
+// the same green/amber/red the report page shows.
+const vitalsColor = (value: number | null | undefined, good: number, mid: number): string => {
+  if (value === null || value === undefined) return "text-muted-foreground";
+  if (value <= good) return "text-green-600 dark:text-green-400";
+  if (value <= mid) return "text-amber-600 dark:text-amber-400";
+  return "text-red-600 dark:text-red-400";
+};
+
+const WEB_VITALS: Array<{ key: keyof GTRow; label: string; fmt: (v: any) => string; good: number; mid: number }> = [
+  { key: "largest_contentful_paint", label: "Largest Contentful Paint", fmt: fmtMs, good: 1200, mid: 2400 },
+  { key: "total_blocking_time", label: "Total Blocking Time", fmt: fmtMs, good: 150, mid: 350 },
   {
     key: "cumulative_layout_shift",
     label: "Cumulative Layout Shift",
-    fmt: (v) => (v === null || v === undefined ? "—" : Number(v).toFixed(3)),
+    fmt: (v) => (v === null || v === undefined ? "—" : Number(v).toFixed(2)),
+    good: 0.1,
+    mid: 0.25,
   },
-  { key: "speed_index", label: "Speed Index", fmt: fmtMs },
-  { key: "time_to_interactive", label: "Time to Interactive", fmt: fmtMs },
+];
+
+const TIMING_METRICS: Array<{ key: keyof GTRow; label: string; fmt: (v: any) => string; good?: number; mid?: number }> = [
+  { key: "first_contentful_paint", label: "First Contentful Paint", fmt: fmtMs, good: 900, mid: 1800 },
+  { key: "speed_index", label: "Speed Index", fmt: fmtMs, good: 1300, mid: 2600 },
+  { key: "time_to_interactive", label: "Time to Interactive", fmt: fmtMs, good: 2500, mid: 5000 },
   { key: "onload_time", label: "Onload Time", fmt: fmtMs },
   { key: "fully_loaded_time", label: "Fully Loaded", fmt: fmtMs },
-  { key: "page_bytes", label: "Page Size", fmt: fmtBytes },
-  {
-    key: "page_requests",
-    label: "Requests",
-    fmt: (v) => (v === null || v === undefined ? "—" : String(v)),
-  },
+  { key: "page_bytes", label: "Total Page Size", fmt: fmtBytes },
+  { key: "page_requests", label: "Requests", fmt: (v) => (v === null || v === undefined ? "—" : String(v)) },
 ];
 
 function RunRecord({ row, isLatest }: { row: GTRow; isLatest: boolean }) {
@@ -123,15 +133,13 @@ function RunRecord({ row, isLatest }: { row: GTRow; isLatest: boolean }) {
             </span>
             <span
               className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${scoreColor(row.performance_score)}`}
-              title="Performance"
             >
-              Perf {row.performance_score}
+              Performance {row.performance_score}%
             </span>
             <span
               className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${scoreColor(row.structure_score)}`}
-              title="Structure"
             >
-              Struct {row.structure_score ?? "—"}
+              Structure {row.structure_score ?? "—"}%
             </span>
           </div>
         )}
@@ -150,27 +158,92 @@ function RunRecord({ row, isLatest }: { row: GTRow; isLatest: boolean }) {
           ) : row.error ? (
             <p className="text-sm text-red-600 dark:text-red-400">{row.error}</p>
           ) : (
-            <>
-              <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs sm:grid-cols-5">
-                {DETAIL_METRICS.map(({ key, label, fmt }) => (
-                  <div key={key} className="flex flex-col">
-                    <span className="text-muted-foreground">{label}</span>
-                    <span className="font-medium">{fmt(row[key])}</span>
+            <div className="space-y-4">
+              {/* Screenshot + grade + scores, GTmetrix-report style */}
+              <div className="flex flex-col gap-4 sm:flex-row">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={`/api/gtmetrix/screenshot?id=${row.id}`}
+                  alt="Page screenshot"
+                  className="h-32 w-full rounded-md border object-cover object-top sm:w-48"
+                  onError={(e) => ((e.target as HTMLImageElement).style.display = "none")}
+                />
+                <div className="grid flex-1 grid-cols-3 gap-3">
+                  <div className="flex flex-col items-center justify-center rounded-lg border bg-muted/30 p-3">
+                    <span
+                      className={`inline-flex h-14 w-14 items-center justify-center rounded-full text-3xl font-black ${gradeColor(row.gtmetrix_grade)}`}
+                    >
+                      {row.gtmetrix_grade || "—"}
+                    </span>
+                    <span className="mt-2 text-xs text-muted-foreground">GTmetrix Grade</span>
                   </div>
-                ))}
+                  <div className="flex flex-col items-center justify-center rounded-lg border bg-muted/30 p-3">
+                    <span className={`text-3xl font-bold ${vitalsColor(100 - (row.performance_score ?? 0), 10, 50)}`}>
+                      {row.performance_score ?? "—"}
+                      <span className="text-lg">%</span>
+                    </span>
+                    <span className="mt-2 text-xs text-muted-foreground">Performance</span>
+                  </div>
+                  <div className="flex flex-col items-center justify-center rounded-lg border bg-muted/30 p-3">
+                    <span className={`text-3xl font-bold ${vitalsColor(100 - (row.structure_score ?? 0), 10, 50)}`}>
+                      {row.structure_score ?? "—"}
+                      <span className="text-lg">%</span>
+                    </span>
+                    <span className="mt-2 text-xs text-muted-foreground">Structure</span>
+                  </div>
+                </div>
               </div>
+
+              {/* Web Vitals with GTmetrix thresholds */}
+              <div>
+                <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Web Vitals
+                </h3>
+                <div className="grid grid-cols-3 gap-3">
+                  {WEB_VITALS.map(({ key, label, fmt, good, mid }) => (
+                    <div key={key} className="rounded-lg border bg-muted/30 p-3 text-center">
+                      <div className={`text-2xl font-bold ${vitalsColor(row[key] as number | null, good, mid)}`}>
+                        {fmt(row[key])}
+                      </div>
+                      <div className="mt-1 text-[11px] leading-tight text-muted-foreground">{label}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Page details */}
+              <div>
+                <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Page Details
+                </h3>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs sm:grid-cols-4">
+                  {TIMING_METRICS.map(({ key, label, fmt, good, mid }) => (
+                    <div key={key} className="flex flex-col">
+                      <span className="text-muted-foreground">{label}</span>
+                      <span
+                        className={`text-sm font-semibold ${
+                          good !== undefined ? vitalsColor(row[key] as number | null, good, mid!) : ""
+                        }`}
+                      >
+                        {fmt(row[key])}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
               {row.report_url && (
                 <a
                   href={row.report_url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="mt-3 inline-flex items-center gap-1 text-xs text-blue-600 underline-offset-2 hover:underline dark:text-blue-400"
+                  className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 underline-offset-2 hover:underline dark:text-blue-400"
                 >
                   Full GTmetrix report (waterfall, video, recommendations)
                   <ExternalLink className="h-3 w-3" />
                 </a>
               )}
-            </>
+            </div>
           )}
         </div>
       )}
@@ -228,9 +301,12 @@ export default function GTmetrixPage() {
   }, [authChecked, supabase]);
 
   const fetchHistory = async (domainId: string): Promise<GTRow[]> => {
+    // Everything except raw_data — it's large and only the screenshot proxy needs it.
     const { data } = await supabase
       .from("gtmetrix_results")
-      .select("*")
+      .select(
+        "id, domain_id, url, location, gtmetrix_grade, performance_score, structure_score, first_contentful_paint, largest_contentful_paint, total_blocking_time, cumulative_layout_shift, speed_index, time_to_interactive, onload_time, fully_loaded_time, page_bytes, page_requests, report_url, error, tested_at"
+      )
       .eq("domain_id", domainId)
       .order("tested_at", { ascending: false })
       .limit(20);
