@@ -65,7 +65,7 @@ export default function SpeedTestAnalysisPage() {
         console.error("Auth check failed:", error);
       }
       if (!data?.session) {
-        router.push("/login");
+        router.push("/sign-in");
         return;
       }
       setAuthChecked(true);

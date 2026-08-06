@@ -88,19 +88,35 @@ export async function runAndSavePageSpeed(
       normalizedUrl
     )}&strategy=${strategy}&category=performance&category=accessibility&category=best-practices&category=seo&key=${apiKey}`;
 
-    const response = await fetch(pagespeedUrl, { cache: "no-store" });
-
-    if (!response.ok) {
-      let errorText = "";
-      let errorData: any = null;
+    // PSI flakes under load (429s, transient 500s). One retry with a short
+    // backoff recovers the majority of transient failures for both the
+    // on-demand path and the cron.
+    let response: Response | null = null;
+    let lastError: Error | null = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (attempt > 0) await new Promise((r) => setTimeout(r, 3000));
       try {
-        errorText = await response.text();
+        response = await fetch(pagespeedUrl, { cache: "no-store" });
+        if (response.ok) break;
+        let errorText = "";
+        let errorData: any = null;
         try {
-          errorData = JSON.parse(errorText);
+          errorText = await response.text();
+          try {
+            errorData = JSON.parse(errorText);
+          } catch {}
         } catch {}
-      } catch {}
-      throw new Error(errorData?.error?.message || errorText || `PageSpeed API error: ${response.status}`);
+        lastError = new Error(errorData?.error?.message || errorText || `PageSpeed API error: ${response.status}`);
+        // Only retry statuses that can succeed on a second try.
+        if (![429, 500, 502, 503, 504].includes(response.status)) throw lastError;
+        response = null;
+      } catch (err: any) {
+        if (err === lastError) throw err;
+        lastError = err instanceof Error ? err : new Error(String(err));
+        response = null; // network error — retry
+      }
     }
+    if (!response) throw lastError || new Error("PageSpeed API request failed");
 
     const apiData = await response.json();
     if (apiData.error) throw new Error(apiData.error.message || "PageSpeed API error");
