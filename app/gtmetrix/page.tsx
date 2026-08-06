@@ -101,7 +101,7 @@ const TIMING_METRICS: Array<{ key: keyof GTRow; label: string; fmt: (v: any) => 
   { key: "page_requests", label: "Requests", fmt: (v) => (v === null || v === undefined ? "—" : String(v)) },
 ];
 
-function RunRecord({ row, isLatest }: { row: GTRow; isLatest: boolean }) {
+function RunRecord({ row, isLatest, title }: { row: GTRow; isLatest: boolean; title?: string }) {
   const [open, setOpen] = useState(isLatest);
   const running = row.performance_score === null && !row.error;
 
@@ -112,7 +112,10 @@ function RunRecord({ row, isLatest }: { row: GTRow; isLatest: boolean }) {
         onClick={() => setOpen((o) => !o)}
       >
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium">{new Date(row.tested_at).toLocaleString()}</div>
+          <div className="text-sm font-medium">
+            {title ? `${title} · ` : ""}
+            {new Date(row.tested_at).toLocaleString()}
+          </div>
           <div className="truncate text-xs text-muted-foreground">{row.url}</div>
         </div>
         {running ? (
@@ -259,6 +262,7 @@ export default function GTmetrixPage() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [selected, setSelected] = useState<Domain | null>(null);
   const [history, setHistory] = useState<GTRow[]>([]);
+  const [recent, setRecent] = useState<GTRow[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [runningSince, setRunningSince] = useState<number | null>(null);
   const [runError, setRunError] = useState("");
@@ -289,6 +293,16 @@ export default function GTmetrixPage() {
         .order("domain_name", { ascending: true });
       setDomains((data || []) as Domain[]);
       setLoadingDomains(false);
+      // Recent runs across all domains, so already-tested sites are visible
+      // before spending another credit.
+      const { data: recentRows } = await supabase
+        .from("gtmetrix_results")
+        .select(
+          "id, domain_id, url, location, gtmetrix_grade, performance_score, structure_score, first_contentful_paint, largest_contentful_paint, total_blocking_time, cumulative_layout_shift, speed_index, time_to_interactive, onload_time, fully_loaded_time, page_bytes, page_requests, report_url, error, tested_at"
+        )
+        .order("tested_at", { ascending: false })
+        .limit(10);
+      setRecent((recentRows || []) as GTRow[]);
     })();
     fetch("/api/gtmetrix")
       .then((r) => r.json())
@@ -443,6 +457,27 @@ export default function GTmetrixPage() {
         )}
       </div>
       {pickerOpen && <div className="fixed inset-0 z-0" onClick={() => setPickerOpen(false)} />}
+
+      {!selected && recent.length > 0 && (
+        <div>
+          <h2 className="mb-2 text-sm font-medium text-muted-foreground">
+            Recent tests — check here first to save credits
+          </h2>
+          <div className="space-y-2">
+            {recent.map((row) => {
+              const d = domains.find((dm) => dm.id === row.domain_id);
+              return (
+                <RunRecord
+                  key={row.id}
+                  row={row}
+                  isLatest={false}
+                  title={d ? d.display_name || d.domain_name : undefined}
+                />
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {selected && (
         <div className="space-y-4">
