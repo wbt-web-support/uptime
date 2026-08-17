@@ -1,11 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/utils/supabase/server";
 import { checkDomainUptime, checkSSLExpiry, checkDomainExpiry, checkDomainIpRecords } from "@/utils/monitoring";
+import { fetchLatestPerDomain } from "@/utils/latest-records";
 import { sendAlert } from "@/utils/email";
 
 // Rate limit the API to prevent abuse
 const RATE_LIMIT_SECONDS = 300; // 5 minutes
 let lastRunTime = 0;
+
+// How long a stored WHOIS result stays good for. Registration dates move once a
+// year, so a week is generous and still catches a renewal well before any alert.
+const WHOIS_REFRESH_DAYS = 7;
 
 export async function GET(request: NextRequest) {
   try {
@@ -54,11 +59,35 @@ export async function GET(request: NextRequest) {
     const results = {
       uptime: { success: 0, failed: 0 },
       ssl: { success: 0, failed: 0 },
-      domain: { success: 0, failed: 0 },
+      domain: { success: 0, failed: 0, skipped_fresh: 0, skipped_quota: 0 },
       ip: { success: 0, failed: 0 },
       alerts: { sent: 0, failed: 0 },
     };
-    
+
+    // WHOIS is a paid, metered API, and a registration date moves once a year. This
+    // cron runs every 6 hours, so re-checking all of them every run was ~750 lookups
+    // a day to learn nothing, which exhausted the plan's quota and left new domains
+    // with no expiry data at all. Only look up what is missing or genuinely stale.
+    const expiryByDomain = await fetchLatestPerDomain(
+      supabase,
+      "domain_expiry",
+      domains.map((d) => d.id),
+    );
+
+    const staleBefore = Date.now() - WHOIS_REFRESH_DAYS * 24 * 60 * 60 * 1000;
+
+    const needsWhoisLookup = (domainId: string): boolean => {
+      const record = expiryByDomain.get(domainId);
+      if (!record?.checked_at) return true;
+      // Always re-check something already expired: it may have just been renewed.
+      if (typeof record.days_remaining === "number" && record.days_remaining < 0) return true;
+      return new Date(record.checked_at).getTime() < staleBefore;
+    };
+
+    // Set once the API reports its quota is gone. Every later lookup in this run
+    // would fail identically, so stop asking.
+    let whoisQuotaExhausted = false;
+
     // Process each domain
     for (const domain of domains) {
       try {
@@ -108,30 +137,42 @@ export async function GET(request: NextRequest) {
           results.ssl.failed++;
         }
         
-        // Check domain expiry
-        try {
-          const domainResult = await checkDomainExpiry(domain.id, domain.domain_name);
-          results.domain.success++;
-          
-          // If domain expiring soon, send alert
-          if (domain.notify_on_expiry && domainResult.daysRemaining <= 30) {
-            try {
-              await sendAlert({
-                type: "domain-expiry",
-                domain: domain.domain_name,
-                displayName: domain.display_name,
-                message: `Domain ${domain.display_name || domain.domain_name} is expiring in ${domainResult.daysRemaining} days (${new Date(domainResult.expiryDate).toLocaleDateString()}).`,
-                daysRemaining: domainResult.daysRemaining,
-              });
-              results.alerts.sent++;
-            } catch (alertError) {
-              console.error("Failed to send domain expiry alert:", alertError);
-              results.alerts.failed++;
+        // Check domain expiry. Metered API, so only when the stored value is
+        // missing, expired, or older than WHOIS_REFRESH_DAYS.
+        if (whoisQuotaExhausted) {
+          results.domain.skipped_quota++;
+        } else if (!needsWhoisLookup(domain.id)) {
+          results.domain.skipped_fresh++;
+        } else {
+          try {
+            const domainResult = await checkDomainExpiry(domain.id, domain.domain_name);
+            results.domain.success++;
+
+            // If domain expiring soon, send alert
+            if (domain.notify_on_expiry && domainResult.daysRemaining <= 30) {
+              try {
+                await sendAlert({
+                  type: "domain-expiry",
+                  domain: domain.domain_name,
+                  displayName: domain.display_name,
+                  message: `Domain ${domain.display_name || domain.domain_name} is expiring in ${domainResult.daysRemaining} days (${new Date(domainResult.expiryDate).toLocaleDateString()}).`,
+                  daysRemaining: domainResult.daysRemaining,
+                });
+                results.alerts.sent++;
+              } catch (alertError) {
+                console.error("Failed to send domain expiry alert:", alertError);
+                results.alerts.failed++;
+              }
+            }
+          } catch (domainError: any) {
+            console.error(`Domain expiry check failed for ${domain.domain_name}:`, domainError);
+            results.domain.failed++;
+
+            if (domainError?.code === "WHOIS_QUOTA_EXCEEDED") {
+              console.error("WHOIS quota exhausted. Skipping expiry checks for the rest of this run.");
+              whoisQuotaExhausted = true;
             }
           }
-        } catch (domainError) {
-          console.error(`Domain expiry check failed for ${domain.domain_name}:`, domainError);
-          results.domain.failed++;
         }
         
         // Check IP records

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { createClient } from "@/utils/supabase/client";
+import { fetchLatestPerDomain } from "@/utils/latest-records";
 import StatusCard from "@/components/StatusCard";
 import DashboardHeader from "@/components/DashboardHeader";
 import StatsOverview from "@/components/StatsOverview";
@@ -100,63 +101,28 @@ export default function PublicDashboard() {
         return;
       }
 
-      // Get latest uptime status for each domain
       const domainIds = domainsData.map(domain => domain.id);
 
-      const { data: uptimeData, error: uptimeError } = await supabase
-        .from('uptime_logs')
-        .select('*')
-        .in('domain_id', domainIds)
-        .order('checked_at', { ascending: false });
-
-      if (uptimeError) throw uptimeError;
-
-      // Get latest SSL info for each domain
-      const { data: sslData, error: sslError } = await supabase
-        .from('ssl_info')
-        .select('*')
-        .in('domain_id', domainIds)
-        .order('checked_at', { ascending: false });
-
-      if (sslError) throw sslError;
-
-      // Get latest domain expiry info for each domain
-      const { data: expiryData, error: expiryError } = await supabase
-        .from('domain_expiry')
-        .select('*')
-        .in('domain_id', domainIds)
-        .order('checked_at', { ascending: false });
-
-      if (expiryError) throw expiryError;
-
-      // Get latest IP records for each domain
-      const { data: ipData, error: ipError } = await supabase
-        .from('ip_records')
-        .select('*')
-        .in('domain_id', domainIds)
-        .order('checked_at', { ascending: false });
-
-      if (ipError) throw ipError;
+      // One row per domain, straight from the database. Asking for the whole history
+      // table and keeping the newest row per domain looks equivalent but is not:
+      // PostgREST caps a response at 1000 rows, and these tables hold tens of
+      // thousands, so the older domains silently fell off the end and rendered as
+      // "Unknown". See utils/latest-records.ts.
+      const [uptimeMap, sslMap, expiryMap, ipMap] = await Promise.all([
+        fetchLatestPerDomain(supabase, 'uptime_logs', domainIds),
+        fetchLatestPerDomain(supabase, 'ssl_info', domainIds),
+        fetchLatestPerDomain(supabase, 'domain_expiry', domainIds),
+        fetchLatestPerDomain(supabase, 'ip_records', domainIds),
+      ]);
 
       // Combine all data
-      const domainsWithStatus = domainsData.map(domain => {
-        // Get the latest uptime record for this domain
-        const latestUptime = uptimeData?.find(log => log.domain_id === domain.id);
-        // Get the latest SSL info for this domain
-        const latestSSL = sslData?.find(ssl => ssl.domain_id === domain.id);
-        // Get the latest domain expiry info for this domain
-        const latestExpiry = expiryData?.find(exp => exp.domain_id === domain.id);
-        // Get the latest IP record for this domain
-        const latestIP = ipData?.find(ip => ip.domain_id === domain.id);
-
-        return {
-          ...domain,
-          uptime: latestUptime,
-          ssl: latestSSL,
-          domain_expiry: latestExpiry,
-          ip_records: latestIP
-        };
-      });
+      const domainsWithStatus = domainsData.map(domain => ({
+        ...domain,
+        uptime: uptimeMap.get(domain.id),
+        ssl: sslMap.get(domain.id),
+        domain_expiry: expiryMap.get(domain.id),
+        ip_records: ipMap.get(domain.id)
+      }));
 
       setDomains(domainsWithStatus);
     } catch (err: any) {

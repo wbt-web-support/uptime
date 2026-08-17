@@ -275,7 +275,15 @@ export async function checkDomainExpiry(domainId: string, domain: string) {
       console.error(`WHOIS API Error: Status ${response.status}`);
       const responseText = await response.text();
       console.error(`Response body: ${responseText}`);
-      throw new Error(`API request failed with status ${response.status}: ${responseText}`);
+
+      // 429 means the plan's quota is gone, so every remaining domain in this run
+      // would fail too. Mark it so the caller can stop instead of burning through
+      // another 180 requests that cannot succeed.
+      const error: any = new Error(
+        `API request failed with status ${response.status}: ${responseText}`,
+      );
+      if (response.status === 429) error.code = "WHOIS_QUOTA_EXCEEDED";
+      throw error;
     }
     
     const data = await response.json();

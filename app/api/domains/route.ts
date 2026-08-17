@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/utils/supabase/server";
+import { fetchLatestPerDomain } from "@/utils/latest-records";
 
 export async function GET(request: NextRequest) {
   try {
@@ -25,72 +26,17 @@ export async function GET(request: NextRequest) {
 
     const domainIds = domainsData.map(domain => domain.id);
 
-    // Fetch all records in parallel, but we'll process them server-side
-    // This is more efficient than individual queries per domain
-    const [uptimeResult, sslResult, expiryResult, ipResult] = await Promise.all([
-      supabase
-        .from('uptime_logs')
-        .select('*')
-        .in('domain_id', domainIds)
-        .order('checked_at', { ascending: false }),
-      supabase
-        .from('ssl_info')
-        .select('*')
-        .in('domain_id', domainIds)
-        .order('checked_at', { ascending: false }),
-      supabase
-        .from('domain_expiry')
-        .select('*')
-        .in('domain_id', domainIds)
-        .order('checked_at', { ascending: false }),
-      supabase
-        .from('ip_records')
-        .select('*')
-        .in('domain_id', domainIds)
-        .order('checked_at', { ascending: false })
+    // One row per domain, straight from the database. Asking for the whole history
+    // table and keeping the newest row per domain looks equivalent but is not:
+    // PostgREST caps a response at 1000 rows, and these tables hold tens of
+    // thousands, so the older domains silently fell off the end and rendered as
+    // "Unknown". See utils/latest-records.ts.
+    const [uptimeMap, sslMap, expiryMap, ipMap] = await Promise.all([
+      fetchLatestPerDomain(supabase, 'uptime_logs', domainIds),
+      fetchLatestPerDomain(supabase, 'ssl_info', domainIds),
+      fetchLatestPerDomain(supabase, 'domain_expiry', domainIds),
+      fetchLatestPerDomain(supabase, 'ip_records', domainIds),
     ]);
-
-    if (uptimeResult.error) throw uptimeResult.error;
-    if (sslResult.error) throw sslResult.error;
-    if (expiryResult.error) throw expiryResult.error;
-    if (ipResult.error) throw ipResult.error;
-
-    // Process server-side to get only latest per domain (more efficient than client-side)
-    const uptimeMap = new Map();
-    if (uptimeResult.data) {
-      uptimeResult.data.forEach((log: any) => {
-        if (!uptimeMap.has(log.domain_id)) {
-          uptimeMap.set(log.domain_id, log);
-        }
-      });
-    }
-
-    const sslMap = new Map();
-    if (sslResult.data) {
-      sslResult.data.forEach((ssl: any) => {
-        if (!sslMap.has(ssl.domain_id)) {
-          sslMap.set(ssl.domain_id, ssl);
-        }
-      });
-    }
-
-    const expiryMap = new Map();
-    if (expiryResult.data) {
-      expiryResult.data.forEach((exp: any) => {
-        if (!expiryMap.has(exp.domain_id)) {
-          expiryMap.set(exp.domain_id, exp);
-        }
-      });
-    }
-
-    const ipMap = new Map();
-    if (ipResult.data) {
-      ipResult.data.forEach((ip: any) => {
-        if (!ipMap.has(ip.domain_id)) {
-          ipMap.set(ip.domain_id, ip);
-        }
-      });
-    }
 
     // Combine all data
     const domainsWithStatus = domainsData.map(domain => ({
