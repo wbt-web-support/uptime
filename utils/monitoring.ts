@@ -1,52 +1,160 @@
 import { createClient } from "@/utils/supabase/server";
 import * as https from "https";
+import * as http from "http";
 import * as tls from "tls";
 import * as net from "net";
 import * as dns from "dns";
 import { promisify } from "util";
 
+const UPTIME_TIMEOUT_MS = 15000;
+const MAX_REDIRECTS = 5;
+const UPTIME_USER_AGENT =
+  "Mozilla/5.0 (compatible; UptimeMonitor/1.0; +https://github.com/wbt-web-support/uptime)";
+
+// Send a single request and report the status line. Redirects are not followed here.
+//
+// TLS verification is deliberately disabled. Uptime answers "does the server respond
+// to visitors", and browsers still load sites whose certificate is expired or missing
+// an intermediate. Certificate health is measured separately by checkSSLExpiry and
+// shown in its own column, so nothing is lost by ignoring it here.
+function probeOnce(
+  targetUrl: string,
+  method: "HEAD" | "GET"
+): Promise<{ status: number; location: string | null }> {
+  return new Promise((resolve, reject) => {
+    let parsed: URL;
+    try {
+      parsed = new URL(targetUrl);
+    } catch {
+      reject(new Error(`Invalid URL: ${targetUrl}`));
+      return;
+    }
+
+    const isHttp = parsed.protocol === "http:";
+    const transport = isHttp ? http : https;
+
+    const req = transport.request(
+      {
+        protocol: parsed.protocol,
+        hostname: parsed.hostname,
+        port: parsed.port || (isHttp ? 80 : 443),
+        path: `${parsed.pathname}${parsed.search}`,
+        method,
+        rejectUnauthorized: false,
+        headers: {
+          "User-Agent": UPTIME_USER_AGENT,
+          Accept: "*/*",
+        },
+      },
+      (res) => {
+        const status = res.statusCode || 0;
+        const location = Array.isArray(res.headers.location)
+          ? res.headers.location[0]
+          : res.headers.location || null;
+
+        // Drain the body so the socket is released instead of hanging on GET fallbacks
+        res.resume();
+        resolve({ status, location });
+      }
+    );
+
+    req.setTimeout(UPTIME_TIMEOUT_MS, () => {
+      req.destroy(new Error(`Request timed out after ${UPTIME_TIMEOUT_MS}ms`));
+    });
+
+    req.once("error", reject);
+    req.end();
+  });
+}
+
+// Follow redirects to the final response, falling back to GET for servers that reject HEAD
+async function probe(startUrl: string): Promise<number> {
+  let currentUrl = startUrl;
+  let method: "HEAD" | "GET" = "HEAD";
+  let headRejected = false;
+
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    const { status, location } = await probeOnce(currentUrl, method);
+
+    // Some servers refuse HEAD but serve the page fine. Retry once with GET before judging.
+    if (method === "HEAD" && !headRejected && (status === 405 || status === 501)) {
+      headRejected = true;
+      method = "GET";
+      continue;
+    }
+
+    if (status >= 300 && status < 400 && location) {
+      currentUrl = new URL(location, currentUrl).toString();
+      continue;
+    }
+
+    return status;
+  }
+
+  throw new Error(`Too many redirects (more than ${MAX_REDIRECTS})`);
+}
+
+// Turn low level socket errors into something readable in the dashboard
+function describeError(error: any): string {
+  const code = error?.code || error?.cause?.code;
+
+  switch (code) {
+    case "ENOTFOUND":
+      return "DNS lookup failed (domain does not resolve)";
+    case "EAI_AGAIN":
+      return "DNS lookup timed out";
+    case "ECONNREFUSED":
+      return "Connection refused";
+    case "ECONNRESET":
+      return "Connection reset by server";
+    case "ETIMEDOUT":
+      return "Connection timed out";
+    case "EHOSTUNREACH":
+      return "Host unreachable";
+    case "ENETUNREACH":
+      return "Network unreachable";
+    case "EPROTO":
+      return "TLS handshake failed";
+    default:
+      return error?.message || "Unknown error";
+  }
+}
+
 // Function to check if a domain is up and save the result to Supabase
 export async function checkDomainUptime(domainId: string, url: string) {
+  const supabase = await createClient();
+  const startTime = Date.now();
+
   try {
-    const supabase = await createClient();
-    
-    const startTime = Date.now();
-    
-    const response = await fetch(url, {
-      method: "HEAD", // Use HEAD to avoid downloading the entire content
-      redirect: "follow",
-      cache: "no-store",
-    });
-    
-    const endTime = Date.now();
-    const responseTime = endTime - startTime;
-    
+    const status = await probe(url);
+    const responseTime = Date.now() - startTime;
+
     // A status code below 400 usually indicates the site is up
-    const isUp = response.status < 400;
-    
+    const isUp = status < 400;
+
     // Save the result to Supabase
     await supabase.from("uptime_logs").insert({
       domain_id: domainId,
       status: isUp,
       response_time: responseTime,
-      error_message: isUp ? null : `Status code: ${response.status}`,
+      error_message: isUp ? null : `Status code: ${status}`,
     });
-    
-    console.log(`Uptime check for ${url}: ${isUp ? "UP" : "DOWN"}`);
+
+    console.log(`Uptime check for ${url}: ${isUp ? "UP" : "DOWN"} (${status})`);
     return isUp;
-    
+
   } catch (error: any) {
-    console.error(`Error checking uptime for ${url}:`, error.message);
-    
+    const message = describeError(error);
+    console.error(`Error checking uptime for ${url}:`, message);
+
     // Save the error to Supabase
-    const supabase = await createClient();
     await supabase.from("uptime_logs").insert({
       domain_id: domainId,
       status: false,
       response_time: null,
-      error_message: error.message || "Unknown error",
+      error_message: message,
     });
-    
+
     return false;
   }
 }
