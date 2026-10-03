@@ -34,6 +34,7 @@ export default function AdminPanel() {
     total: number;
   }>({ successes: 0, failures: 0, total: 0 });
   const [checkingDomain, setCheckingDomain] = useState<string | null>(null);
+  const [checkProgress, setCheckProgress] = useState<{ done: number; total: number } | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(25);
   const [showAddForm, setShowAddForm] = useState(false);
@@ -89,6 +90,52 @@ export default function AdminPanel() {
     setSuccess(`Monitoring interval set to ${checkInterval}`);
   };
 
+  // Run the four checks for one domain at the same time. Resolves to true only if all
+  // of them returned 2xx (fetch itself does not throw on a 500).
+  const runDomainChecks = async (domain: { id: string; uptime_url: string; domain_name: string }) => {
+    const post = (path: string, body: object) =>
+      fetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      }).then(res => res.ok);
+
+    const results = await Promise.allSettled([
+      post('/api/check/uptime', { domainId: domain.id, url: domain.uptime_url }),
+      post('/api/check/ssl', { domainId: domain.id, domain: domain.domain_name }),
+      post('/api/check/whois', { domainId: domain.id, domain: domain.domain_name }),
+      post('/api/check/ip', { domainId: domain.id, domain: domain.domain_name })
+    ]);
+    return results.every(r => r.status === 'fulfilled' && r.value);
+  };
+
+  // Check many domains, a few at a time, so one slow site doesn't hold up the rest
+  // and we don't flood the server or the WHOIS API with hundreds of requests at once.
+  const CHECK_CONCURRENCY = 5;
+  const checkDomainsBatch = async (list: any[]) => {
+    let successes = 0;
+    let failures = 0;
+    let next = 0;
+    setCheckProgress({ done: 0, total: list.length });
+
+    const worker = async () => {
+      while (next < list.length) {
+        const domain = list[next++];
+        try {
+          if (await runDomainChecks(domain)) successes++;
+          else failures++;
+        } catch (err) {
+          failures++;
+          console.error(`Error checking domain ${domain.domain_name}:`, err);
+        }
+        setCheckProgress(p => p && { ...p, done: p.done + 1 });
+      }
+    };
+
+    await Promise.all(Array.from({ length: Math.min(CHECK_CONCURRENCY, list.length) }, worker));
+    return { successes, failures };
+  };
+
   const checkAllDomains = async () => {
     if (domains.length === 0) return;
 
@@ -96,47 +143,8 @@ export default function AdminPanel() {
     setSuccess(""); // Clear any previous messages
     setError("");
 
-    let successes = 0;
-    let failures = 0;
-
     try {
-      // Process each domain
-      for (const domain of domains) {
-        try {
-          // Check uptime
-          await fetch('/api/check/uptime', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ domainId: domain.id, url: domain.uptime_url })
-          });
-
-          // Check SSL
-          await fetch('/api/check/ssl', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ domainId: domain.id, domain: domain.domain_name })
-          });
-
-          // Check domain expiry
-          await fetch('/api/check/whois', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ domainId: domain.id, domain: domain.domain_name })
-          });
-
-          // Check IP records
-          await fetch('/api/check/ip', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ domainId: domain.id, domain: domain.domain_name })
-          });
-
-          successes++;
-        } catch (err) {
-          failures++;
-          console.error(`Error checking domain ${domain.domain_name}:`, err);
-        }
-      }
+      const { successes, failures } = await checkDomainsBatch(domains);
 
       // Update stats and fetch fresh data
       setCheckResults({
@@ -152,6 +160,7 @@ export default function AdminPanel() {
       setError("Error during batch domain check: " + err.message);
     } finally {
       setCheckingAll(false);
+      setCheckProgress(null);
     }
   };
 
@@ -314,35 +323,14 @@ export default function AdminPanel() {
     try {
       setSuccess(`Checking domain: ${domain_name}...`);
 
-      // Check uptime
-      await fetch('/api/check/uptime', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ domainId: id, url })
-      });
+      const ok = await runDomainChecks({ id, uptime_url: url, domain_name });
 
-      // Check SSL
-      await fetch('/api/check/ssl', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ domainId: id, domain: domain_name })
-      });
-
-      // Check domain expiry
-      await fetch('/api/check/whois', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ domainId: id, domain: domain_name })
-      });
-
-      // Check IP records
-      await fetch('/api/check/ip', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ domainId: id, domain: domain_name })
-      });
-
-      setSuccess(`Domain ${domain_name} checked successfully!`);
+      if (ok) {
+        setSuccess(`Domain ${domain_name} checked successfully!`);
+      } else {
+        setSuccess("");
+        setError(`Some checks failed for ${domain_name}`);
+      }
       fetchDomains(); // Refresh data
     } catch (err: any) {
       setError(`Error checking domain ${domain_name}: ${err.message}`);
@@ -410,60 +398,24 @@ export default function AdminPanel() {
   const checkSelectedDomains = async () => {
     if (selectedDomains.length === 0) return;
 
-    setLoading(true);
+    // Keep the table on screen while checking (checkingAll suppresses the loading skeleton)
+    setCheckingAll(true);
+    setError("");
     setSuccess(`Checking ${selectedDomains.length} selected domains...`);
 
     try {
-      let successes = 0;
-      let failures = 0;
-
       // Get the selected domains from the full domains list
       const domainsToCheck = domains.filter(domain => selectedDomains.includes(domain.id));
 
-      // Process each selected domain
-      for (const domain of domainsToCheck) {
-        try {
-          // Check uptime
-          await fetch('/api/check/uptime', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ domainId: domain.id, url: domain.uptime_url })
-          });
-
-          // Check SSL
-          await fetch('/api/check/ssl', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ domainId: domain.id, domain: domain.domain_name })
-          });
-
-          // Check domain expiry
-          await fetch('/api/check/whois', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ domainId: domain.id, domain: domain.domain_name })
-          });
-
-          // Check IP records
-          await fetch('/api/check/ip', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ domainId: domain.id, domain: domain.domain_name })
-          });
-
-          successes++;
-        } catch (err) {
-          failures++;
-          console.error(`Error checking domain ${domain.domain_name}:`, err);
-        }
-      }
+      const { successes, failures } = await checkDomainsBatch(domainsToCheck);
 
       setSuccess(`Domain checks completed: ${successes} successful, ${failures} failed`);
       fetchDomains(); // Refresh data
     } catch (error: any) {
       setError(`Error during batch domain check: ${error.message}`);
     } finally {
-      setLoading(false);
+      setCheckingAll(false);
+      setCheckProgress(null);
     }
   };
 
@@ -634,10 +586,10 @@ export default function AdminPanel() {
               <button
                 onClick={checkSelectedDomains}
                 className="btn btn-secondary flex items-center gap-2"
-                disabled={loading}
+                disabled={loading || checkingAll}
               >
-                <RefreshCw size={16} />
-                Check Selected
+                <RefreshCw size={16} className={checkingAll ? "animate-spin" : ""} />
+                {checkProgress ? `Checking ${checkProgress.done}/${checkProgress.total}` : "Check Selected"}
               </button>
               <button
                 onClick={deleteSelectedDomains}
