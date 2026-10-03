@@ -39,3 +39,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# funnel-tester has its own repos; this app only calls its backend over HTTP
+funnel-tester/

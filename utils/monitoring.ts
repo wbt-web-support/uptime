@@ -120,6 +120,24 @@ function describeError(error: any): string {
   }
 }
 
+// Check a URL with the same rules as the uptime check, without saving anything.
+// Used for funnel pages, which keep their latest result on their own table.
+export async function probeUrl(url: string) {
+  const startTime = Date.now();
+  try {
+    const statusCode = await probe(url);
+    const isUp = statusCode < 400;
+    return {
+      isUp,
+      statusCode,
+      responseTime: Date.now() - startTime,
+      error: isUp ? null : `Status code: ${statusCode}`,
+    };
+  } catch (error: any) {
+    return { isUp: false, statusCode: null, responseTime: null, error: describeError(error) };
+  }
+}
+
 // Function to check if a domain is up and save the result to Supabase
 export async function checkDomainUptime(domainId: string, url: string) {
   const supabase = await createClient();
