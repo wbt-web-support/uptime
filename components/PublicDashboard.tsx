@@ -17,7 +17,11 @@ interface Domain {
   uptime_url: string;
   category?: string;
   tag?: string;
+  is_dominate?: boolean;
 }
+
+// Category-filter value that selects domains flagged as Dominate clients
+const DOMINATE_FILTER = "Dominate";
 
 interface UptimeInfo {
   id: string;
@@ -143,8 +147,10 @@ export default function PublicDashboard() {
     return () => clearInterval(intervalId);
   }, []);
 
-  // Get all unique categories from domains
-  const categories = ["all", ...Array.from(new Set(domains
+  // Get all unique categories from domains. "Dominate" is not a category but a separate
+  // flag (is_dominate), listed here so it can be filtered on like one.
+  const hasDominate = domains.some(domain => domain.is_dominate);
+  const categories = ["all", ...(hasDominate ? [DOMINATE_FILTER] : []), ...Array.from(new Set(domains
     .filter(domain => domain.category)
     .map(domain => domain.category as string)
   ))];
@@ -166,7 +172,7 @@ export default function PublicDashboard() {
 
     const matchesCategory =
       categoryFilter === 'all' ||
-      domain.category === categoryFilter;
+      (categoryFilter === DOMINATE_FILTER ? domain.is_dominate === true : domain.category === categoryFilter);
 
     return matchesSearch && matchesStatus && matchesCategory;
   }).sort((a, b) => {
@@ -208,6 +214,9 @@ export default function PublicDashboard() {
   domains.forEach(domain => {
     if (domain.category) {
       categoryStats[domain.category] = (categoryStats[domain.category] || 0) + 1;
+    }
+    if (domain.is_dominate) {
+      categoryStats[DOMINATE_FILTER] = (categoryStats[DOMINATE_FILTER] || 0) + 1;
     }
   });
 
@@ -434,6 +443,11 @@ export default function PublicDashboard() {
                         </span>
                       ) : (
                         <span className="text-muted-foreground text-xs">Not set</span>
+                      )}
+                      {domain.is_dominate && (
+                        <span className="ml-1 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/20 dark:text-amber-400" title="Dominate package client">
+                          Dominate
+                        </span>
                       )}
                     </td>
                     <td className="px-4 py-4">

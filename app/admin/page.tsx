@@ -14,6 +14,9 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { exportRows, domainToExportRow, type ExportFormat } from "@/utils/export";
 
+// Category-filter value that selects domains flagged as Dominate clients
+const DOMINATE_FILTER = "Dominate";
+
 export default function AdminPanel() {
   const [domains, setDomains] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -212,8 +215,10 @@ export default function AdminPanel() {
     return shortNames[category] || category;
   };
 
-  // Get all unique categories from domains
-  const categories = ["all", ...Array.from(new Set(domains
+  // Get all unique categories from domains. "Dominate" is not a category but a separate
+  // flag (is_dominate), listed here so it can be filtered on like one.
+  const hasDominate = domains.some(domain => domain.is_dominate);
+  const categories = ["all", ...(hasDominate ? [DOMINATE_FILTER] : []), ...Array.from(new Set(domains
     .filter(domain => domain.category)
     .map(domain => domain.category)
   ))];
@@ -236,7 +241,7 @@ export default function AdminPanel() {
 
       const matchesCategory =
         categoryFilter === 'all' ||
-        domain.category === categoryFilter;
+        (categoryFilter === DOMINATE_FILTER ? domain.is_dominate === true : domain.category === categoryFilter);
 
       return matchesSearch && matchesStatus && matchesCategory;
     }).sort((a, b) => {
@@ -464,6 +469,9 @@ export default function AdminPanel() {
   domains.forEach(domain => {
     if (domain.category) {
       categoryStats[domain.category] = (categoryStats[domain.category] || 0) + 1;
+    }
+    if (domain.is_dominate) {
+      categoryStats[DOMINATE_FILTER] = (categoryStats[DOMINATE_FILTER] || 0) + 1;
     }
   });
 
@@ -799,6 +807,11 @@ export default function AdminPanel() {
                         </span>
                       ) : (
                         <span className="text-muted-foreground text-xs">Not set</span>
+                      )}
+                      {domain.is_dominate && (
+                        <span className="ml-1 inline-flex items-center px-2.5 text-nowrap py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/20 dark:text-amber-400" title="Dominate package client">
+                          Dominate
+                        </span>
                       )}
                     </td>
                     <td className="p-3">
