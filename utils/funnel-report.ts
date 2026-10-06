@@ -449,6 +449,80 @@ export function explainFailure(failure: string | null | undefined, siteProblem?:
   return { owner: "tester", title: "The test didn't finish", what: f, fix: "Open the full report for the step-by-step details." };
 }
 
+// ---------------------------------------------------------------------------
+// The four stages of a funnel test, each ticked or crossed
+// ---------------------------------------------------------------------------
+
+/** ok / failed, "none" = not part of this funnel (no SMS step, no results buttons),
+ * "pending" = not reached, "unknown" = a test from before this was recorded */
+export type StageState = "ok" | "failed" | "none" | "pending" | "unknown";
+export type StageKey = "form" | "otp" | "results" | "buttons";
+export type FunnelStages = Record<StageKey, StageState>;
+
+export const STAGES: { key: StageKey; label: string; short: string }[] = [
+  { key: "form", label: "Quote form", short: "Form" },
+  { key: "otp", label: "SMS verified", short: "SMS" },
+  { key: "results", label: "Thank-you / results page", short: "Thank-you" },
+  { key: "buttons", label: "Save quote & Checkout", short: "Save & Checkout" },
+];
+
+const OTP_FAILURE = /OTP|SMS code|verification code/i;
+
+// From one device's result: did it get through the form, the SMS code, to the
+// thank-you/results page, and did the results-page buttons work?
+export function deriveStages(result: {
+  status: string;
+  failure: string | null;
+  /** Whether the walk reached an SMS-code screen; null for tests from before it was recorded */
+  otp_seen?: boolean | null;
+  results_buttons?: { ok: number; total: number } | null;
+}): FunnelStages {
+  const completed = result.status === "passed";
+  const failure = result.failure ?? "";
+  const stopped = /^Stopped by user|interrupted/i.test(failure);
+  const otpSeen = result.otp_seen ?? null;
+  const otpFailed = !completed && !stopped && OTP_FAILURE.test(failure);
+
+  const form: StageState = completed || otpFailed || (otpSeen && !stopped) ? "ok" : stopped ? "pending" : "failed";
+  const otp: StageState = otpFailed
+    ? "failed"
+    : otpSeen === true
+      ? "ok"
+      : otpSeen === null
+        ? form === "ok" ? "unknown" : "pending"
+        : completed
+          ? "none"
+          : "pending";
+  const results: StageState = completed ? "ok" : form === "ok" && otp !== "failed" && !stopped ? "failed" : "pending";
+  const buttons: StageState = !completed
+    ? "pending"
+    : !result.results_buttons
+      ? "unknown"
+      : result.results_buttons.total === 0
+        ? "none"
+        : result.results_buttons.ok === result.results_buttons.total
+          ? "ok"
+          : "failed";
+  return { form, otp, results, buttons };
+}
+
+// Desktop and mobile together: a stage failed if it failed on either device,
+// passed only if it passed on both
+export function combineStages(list: FunnelStages[]): FunnelStages | null {
+  if (list.length === 0) return null;
+  if (list.length === 1) return list[0];
+  const pick = (key: StageKey): StageState => {
+    const states = list.map(s => s[key]);
+    if (states.includes("failed")) return "failed";
+    if (states.every(s => s === "ok")) return "ok";
+    if (states.includes("pending")) return "pending";
+    if (states.every(s => s === "none")) return "none";
+    if (states.includes("ok") && states.every(s => s === "ok" || s === "none")) return "ok";
+    return "unknown";
+  };
+  return { form: pick("form"), otp: pick("otp"), results: pick("results"), buttons: pick("buttons") };
+}
+
 // What the Issues page needs from one walk - the fields the backend's
 // /reports-detail returns - small enough to store alongside the full report
 export interface WalkSummary {
@@ -535,7 +609,8 @@ export function buildSummary(report: WalkReport): SummaryItem[] {
       };
 
   const paymentConfirmed = (report.apiCalls ?? []).some(c => /^200 POST \S*api\.stripe\.com\/v1\/payment_intents\/\S+\/confirm/.test(c));
-  const hasCheckout = allButtons.some(b => /checkout/i.test(b.label));
+  // Sites rarely label it "checkout" - e.g. "Secure your online price"
+  const hasCheckout = allButtons.some(b => /checkout|check out|secure your (online )?price|buy now|book (&|and) pay|pay (now|deposit|online)|reserve|place (your )?order|lock in/i.test(b.label));
   const payment: SummaryItem = paymentConfirmed
     ? { title: "Checkout payment", value: "Paid (test)", note: "Stripe confirmed", tone: "good" }
     : hasCheckout

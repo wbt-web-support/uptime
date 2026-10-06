@@ -171,7 +171,8 @@ async function discoverFunnelUrls(siteUrl: string, maxServicePages: number): Pro
 // gets tested. Returns what was added and which existing funnels were marked.
 export async function discoverAndAddFunnels(
   supabase: SupabaseClient,
-  domains: { id: string; domain_name: string; display_name: string | null; uptime_url: string }[],
+  // id null: a website added by hand on the Funnel Test page, not a monitored client
+  domains: { id: string | null; domain_name: string; display_name: string | null; uptime_url: string }[],
   concurrency = 8
 ) {
   const { data: existing, error } = await supabase.from("funnels").select("id, name, url");

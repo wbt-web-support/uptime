@@ -51,20 +51,30 @@ async function saveReport(
 ): Promise<string | null> {
   // A funnel walk report is tens of KB (every step, log and API call). Keep a small
   // summary inside it so the Issues page can read just that via report->_summary.
-  const stored =
+  const withSummary =
     kind === "test" && report && typeof report === "object"
       ? { ...(report as object), _summary: summarizeWalk(report as WalkReport) }
       : report;
+  // Postgres JSONB rejects the NUL character ("unsupported Unicode escape
+  // sequence"). Sites' API responses copied into the report sometimes contain one,
+  // which silently lost that device's whole report - drop them before saving.
+  const stored = JSON.parse(JSON.stringify(withSummary).replace(/\\u0000/g, ""));
 
-  const { data, error } = await supabase
-    .from("funnel_reports")
-    .insert({ funnel_id: funnelId, kind, viewport, status, report: stored })
-    .select("id")
-    .single();
-  if (error) {
-    console.error("[funnel-tester] could not save report:", error.message);
-    return null;
+  // One retry: a dropped connection ("fetch failed") lost reports too
+  let saved: { id: string } | null = null;
+  for (let attempt = 1; attempt <= 2 && !saved; attempt++) {
+    const { data, error } = await supabase
+      .from("funnel_reports")
+      .insert({ funnel_id: funnelId, kind, viewport, status, report: stored })
+      .select("id")
+      .single();
+    if (data) saved = data;
+    else if (attempt === 2 || !/fetch failed|network|timeout/i.test(error?.message ?? "")) {
+      console.error("[funnel-tester] could not save report:", error?.message);
+      return null;
+    }
   }
+  if (!saved) return null;
 
   const { data: older } = await supabase
     .from("funnel_reports")
@@ -78,7 +88,7 @@ async function saveReport(
     await supabase.from("funnel_reports").delete().in("id", older.map(r => r.id));
   }
 
-  return data.id;
+  return saved.id;
 }
 
 // ---------------------------------------------------------------------------
@@ -97,6 +107,8 @@ interface ViewportResult {
   // Results-page buttons (Save quote, Checkout...) when they were tested: how many
   // worked, which didn't, and whether a (test) card payment went through
   results_buttons?: { ok: number; total: number; failed: string[]; payment: string } | null;
+  // The walk reached an SMS-code screen - for the "SMS verified" stage
+  otp_seen?: boolean;
 }
 
 // Accepts "desktop", "mobile" or both, as the funnel tester's own dashboard offers
@@ -138,7 +150,10 @@ export async function startFunnelTest(
   // After a successful submit, also click whichever results-page buttons the site
   // has (Save quote, Book installation, Checkout...) and complete their follow-up
   // forms. A results page without any is simply skipped. False stops at the submit.
-  testResultsButtons = true
+  testResultsButtons = true,
+  // A person pressing Run test on this one funnel and confirming "test again anyway"
+  // skips the cool-down below; automatic and bulk tests never do
+  ignoreCooldown = false
 ) {
   // Never two tests of one funnel at once, whoever starts them (page, auto-test,
   // script) - each one submits the form, so overlapping runs mean duplicate leads
@@ -153,7 +168,7 @@ export async function startFunnelTest(
   // Cool-down after a finished test: re-testing the same funnel over and over asks
   // its site for SMS codes again and again, which gets test numbers blocked. A test
   // that was stopped or crashed (status "error") can be re-run straight away.
-  if ((current?.test_status === "passed" || current?.test_status === "failed") && current.test_finished_at) {
+  if (!ignoreCooldown && (current?.test_status === "passed" || current?.test_status === "failed") && current.test_finished_at) {
     const readyAt = new Date(current.test_finished_at).getTime() + RETEST_COOLDOWN_MINUTES * 60_000;
     if (Date.now() < readyAt) {
       const mins = Math.ceil((readyAt - Date.now()) / 60_000);
@@ -237,6 +252,8 @@ async function readViewportResult(
           };
         }
         result.steps = Array.isArray(report.steps) ? report.steps.length : null;
+        // An "_otp" screenshot is taken on every SMS-code screen the walk handled
+        result.otp_seen = Array.isArray(report.steps) && report.steps.some((s: any) => /_otp\.png$/.test(s?.screenshot ?? ""));
         result.tracking_ok = !!(report.gtmPresentThroughout || report.gtagPresentThroughout);
         result.report_id = await saveReport(supabase, funnelId, "test", viewport, result.status, report);
       }

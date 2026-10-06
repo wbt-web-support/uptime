@@ -10,7 +10,7 @@ export async function POST(request: NextRequest) {
     const { supabase, error } = await requireAdmin();
     if (error) return error;
 
-    const { funnelId, viewports: rawViewports, withUiCheck = true, testResultsButtons = true } = await request.json();
+    const { funnelId, viewports: rawViewports, withUiCheck = true, testResultsButtons = true, ignoreCooldown = false } = await request.json();
     if (!funnelId) {
       return NextResponse.json({ error: "Funnel ID is required" }, { status: 400 });
     }
@@ -32,7 +32,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "A test is already running for this funnel" }, { status: 409 });
     }
 
-    const { runId, startedAt } = await startFunnelTest(supabase, funnel, viewports, testResultsButtons !== false);
+    const { runId, startedAt } = await startFunnelTest(supabase, funnel, viewports, testResultsButtons !== false, ignoreCooldown === true);
 
     // The UI check is a bonus here: if it can't start, the funnel test still runs
     let uiStarted = false;

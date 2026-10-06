@@ -12,7 +12,26 @@ export async function POST(request: NextRequest) {
     const { supabase, error } = await requireAdmin();
     if (error) return error;
 
-    const { domainId } = await request.json().catch(() => ({}));
+    const { domainId, site } = await request.json().catch(() => ({}));
+
+    // A website added by hand: { site: { name, url } } - its funnels get no client
+    if (site?.url) {
+      let url: URL;
+      try {
+        url = new URL(/^https?:\/\//i.test(site.url) ? site.url : `https://${site.url}`);
+      } catch {
+        return NextResponse.json({ error: "Please enter a valid landing page URL" }, { status: 400 });
+      }
+      const result = await discoverAndAddFunnels(supabase, [
+        {
+          id: null,
+          domain_name: url.hostname.replace(/^www\./, ""),
+          display_name: String(site.name || "").trim() || url.hostname,
+          uptime_url: url.toString(),
+        },
+      ]);
+      return NextResponse.json({ success: true, ...result });
+    }
 
     let query = supabase.from("domains").select("id, domain_name, display_name, uptime_url");
     if (domainId) query = query.eq("id", domainId);

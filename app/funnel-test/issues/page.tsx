@@ -14,6 +14,8 @@ import { CATEGORY_CLASS, categorize, explainFailure, OWNER_LABEL, type FailureCa
 interface Run {
   id: string;
   funnelName: string;
+  // Added by hand on the Funnel Test page (no client), shown in its own tab
+  manual: boolean;
   viewport: "desktop" | "mobile";
   createdAt: string;
   summary: WalkSummary;
@@ -33,6 +35,7 @@ export default function FunnelIssuesPage() {
   const [runs, setRuns] = useState<Run[] | null>(null);
   const [error, setError] = useState("");
   const [filter, setFilter] = useState<FailureCategory | "All">("All");
+  const [source, setSource] = useState<"clients" | "manual">("clients");
 
   useEffect(() => {
     (async () => {
@@ -43,13 +46,14 @@ export default function FunnelIssuesPage() {
           .eq("kind", "test")
           .order("created_at", { ascending: false })
           .limit(1000),
-        supabase.from("funnels").select("id, name"),
+        supabase.from("funnels").select("id, name, domain_id"),
       ]);
       if (reportsRes.error || funnelsRes.error) {
         setError((reportsRes.error || funnelsRes.error)!.message);
         return;
       }
       const names = new Map((funnelsRes.data || []).map(f => [f.id, f.name]));
+      const manualIds = new Set((funnelsRes.data || []).filter(f => !f.domain_id).map(f => f.id));
       setRuns(
         (reportsRes.data || []).map((r: any) => {
           // Reports saved before summaries existed: rebuild what the failure text allows
@@ -66,6 +70,7 @@ export default function FunnelIssuesPage() {
           return {
             id: r.id,
             funnelName: names.get(r.funnel_id) ?? "Deleted funnel",
+            manual: manualIds.has(r.funnel_id),
             viewport: r.viewport,
             createdAt: r.created_at,
             summary,
@@ -92,19 +97,24 @@ export default function FunnelIssuesPage() {
     );
   }
 
-  const total = runs?.length ?? 0;
-  const passed = runs?.filter(r => r.summary.category === "Passed").length ?? 0;
-  const knownLimitations = runs?.filter(r => !r.summary.completed && r.summary.knownLimitation).length ?? 0;
+  const allRuns = runs;
+  const manualCount = allRuns?.filter(r => r.manual).length ?? 0;
+  const clientCount = (allRuns?.length ?? 0) - manualCount;
+  // Everything below is for the chosen tab only
+  const tabRuns = allRuns?.filter(r => r.manual === (source === "manual")) ?? null;
+  const total = tabRuns?.length ?? 0;
+  const passed = tabRuns?.filter(r => r.summary.category === "Passed").length ?? 0;
+  const knownLimitations = tabRuns?.filter(r => !r.summary.completed && r.summary.knownLimitation).length ?? 0;
   const actionable = total - passed - knownLimitations;
-  const uiIssues = runs?.reduce((n, r) => n + r.summary.uiIssueCount, 0) ?? 0;
+  const uiIssues = tabRuns?.reduce((n, r) => n + r.summary.uiIssueCount, 0) ?? 0;
 
   const counts = new Map<FailureCategory, number>();
-  runs?.forEach(r => counts.set(r.summary.category, (counts.get(r.summary.category) ?? 0) + 1));
+  tabRuns?.forEach(r => counts.set(r.summary.category, (counts.get(r.summary.category) ?? 0) + 1));
   const failureCategories = Array.from(counts.entries())
     .filter(([cat]) => cat !== "Passed")
     .sort((a, b) => b[1] - a[1]);
 
-  const visible = !runs ? [] : filter === "All" ? runs : runs.filter(r => r.summary.category === filter);
+  const visible = !tabRuns ? [] : filter === "All" ? tabRuns : tabRuns.filter(r => r.summary.category === filter);
 
   return (
     <div className="mx-auto w-full max-w-5xl px-4 py-8">
@@ -121,6 +131,28 @@ export default function FunnelIssuesPage() {
         </div>
       ) : (
         <>
+          {/* Client websites and websites added by hand are kept apart */}
+          <div className="mb-4 inline-flex rounded-lg border p-1">
+            {([
+              { id: "clients", label: "Client websites", count: clientCount },
+              { id: "manual", label: "Added manually", count: manualCount },
+            ] as const).map(tab => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => {
+                  setSource(tab.id);
+                  setFilter("All");
+                }}
+                className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                  source === tab.id ? "bg-brand text-white" : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {tab.label} <span className="opacity-75">({tab.count})</span>
+              </button>
+            ))}
+          </div>
+
           <div className="mb-6 flex flex-wrap gap-3">
             <StatTile label="Total runs" value={total} />
             <StatTile label="Passed" value={passed} className="text-green-600 dark:text-green-400" />
