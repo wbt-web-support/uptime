@@ -33,7 +33,7 @@ export default async function RootLayout({
       <body className="bg-background min-h-screen flex flex-col" suppressHydrationWarning>
         <ThemeProvider
           attribute="class"
-          defaultTheme="system"
+          defaultTheme="dark"
           enableSystem
           disableTransitionOnChange
         >

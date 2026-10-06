@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin, startUiCheck } from "@/utils/funnel-tester";
+import { requireAdmin, stopFunnelTest } from "@/utils/funnel-tester";
 
-// Start a UI check on the funnel-tester backend: loads the page on desktop and
-// mobile, clicks every quote button and looks for visual problems. No forms are
-// submitted, so unlike the funnel test it creates no leads.
+// Stop a running funnel test (and its UI check). The walker finishes the step it is
+// on, then stops; the device still queued never starts. Anything already submitted
+// stays submitted.
 export async function POST(request: NextRequest) {
   try {
     const { supabase, error } = await requireAdmin();
@@ -14,10 +14,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Funnel ID is required" }, { status: 400 });
     }
 
-    // Use the stored URL rather than one sent by the browser
     const { data: funnel, error: funnelError } = await supabase
       .from("funnels")
-      .select("id, name, url, domain_id, ui_status")
+      .select("*")
       .eq("id", funnelId)
       .single();
 
@@ -26,15 +25,10 @@ export async function POST(request: NextRequest) {
     if (!funnel) {
       return NextResponse.json({ error: "Funnel not found" }, { status: 404 });
     }
-    if (funnel.ui_status === "running") {
-      return NextResponse.json({ error: "A UI check is already running for this funnel" }, { status: 409 });
-    }
 
-    const { runId, startedAt } = await startUiCheck(supabase, funnel);
-
-    return NextResponse.json({ success: true, run_id: runId, started_at: startedAt });
+    return NextResponse.json({ success: true, funnel: await stopFunnelTest(supabase, funnel) });
   } catch (error: any) {
-    console.error("UI check start error:", error);
+    console.error("Funnel test stop error:", error);
     return NextResponse.json(
       { error: error.message || "Internal server error" },
       { status: 500 }

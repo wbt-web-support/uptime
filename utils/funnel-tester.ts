@@ -1,12 +1,15 @@
 import { NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/utils/supabase/server";
+import { buildSummary, flattenFinalActions, summarizeWalk, type WalkReport } from "@/utils/funnel-report";
 
 // The funnel-tester backend (funnel-tester/backend) runs as its own always-on server:
 // a walk drives a real browser for minutes, which does not fit a serverless function.
 export const FUNNEL_TESTER_URL = (process.env.FUNNEL_TESTER_URL || "http://localhost:4000").replace(/\/$/, "");
 // Must match FUNNEL_TESTER_API_KEY on the backend once it is set there
 const FUNNEL_TESTER_API_KEY = process.env.FUNNEL_TESTER_API_KEY;
+// Minimum gap before the same funnel can be tested again after a finished test
+const RETEST_COOLDOWN_MINUTES = Number(process.env.FUNNEL_RETEST_COOLDOWN_MINUTES || 60);
 
 // Same rule as the /api/check routes: signed in and listed in ADMIN_EMAIL.
 // Returns the Supabase client, or the error response to send back.
@@ -46,9 +49,16 @@ async function saveReport(
   status: string,
   report: unknown
 ): Promise<string | null> {
+  // A funnel walk report is tens of KB (every step, log and API call). Keep a small
+  // summary inside it so the Issues page can read just that via report->_summary.
+  const stored =
+    kind === "test" && report && typeof report === "object"
+      ? { ...(report as object), _summary: summarizeWalk(report as WalkReport) }
+      : report;
+
   const { data, error } = await supabase
     .from("funnel_reports")
-    .insert({ funnel_id: funnelId, kind, viewport, status, report })
+    .insert({ funnel_id: funnelId, kind, viewport, status, report: stored })
     .select("id")
     .single();
   if (error) {
@@ -78,21 +88,90 @@ async function saveReport(
 interface ViewportResult {
   status: "passed" | "failed" | "error";
   failure: string | null;
+  // The site's own request failing (e.g. its postcode lookup answering 403), which
+  // is usually the real reason behind a "blocked" walk
+  site_problem?: string | null;
   steps: number | null;
   tracking_ok: boolean | null;
   report_id: string | null;
+  // Results-page buttons (Save quote, Checkout...) when they were tested: how many
+  // worked, which didn't, and whether a (test) card payment went through
+  results_buttons?: { ok: number; total: number; failed: string[]; payment: string } | null;
 }
 
-// Kick off a walk on desktop then mobile and mark the funnel as running.
-// Each device submits the funnel's form for real, so every test creates two real leads.
+// Accepts "desktop", "mobile" or both, as the funnel tester's own dashboard offers
+export function parseViewports(raw: unknown): Viewport[] {
+  if (!Array.isArray(raw) || raw.length === 0) return [...VIEWPORTS];
+  const picked = VIEWPORTS.filter(v => raw.includes(v));
+  return picked.length ? picked : [...VIEWPORTS];
+}
+
+// Kick off a walk (desktop first, then mobile) and mark the funnel as running.
+// Each device submits the funnel's form for real, so each one creates a real lead.
+// Every test starts on the client's homepage, as a real visitor would. For a funnel
+// page such as /ashp-quote/ the walker is told to enter the site through the link to
+// that page, so each service's funnel (boiler, heat pump, air con, solar...) is reached
+// via its own button rather than whichever the walker would pick first.
+async function testEntry(supabase: SupabaseClient, funnel: { url: string; domain_id?: string | null }) {
+  const target = new URL(funnel.url);
+  if (target.pathname.replace(/\/+$/, "") === "") return { startUrl: funnel.url, entryHint: undefined };
+
+  let homepage = `${target.origin}/`;
+  if (funnel.domain_id) {
+    const { data: domain } = await supabase.from("domains").select("uptime_url").eq("id", funnel.domain_id).maybeSingle();
+    // Only use the client's listed homepage if it's the same site as the funnel
+    try {
+      if (domain?.uptime_url && new URL(domain.uptime_url).hostname.replace(/^www\./, "") === target.hostname.replace(/^www\./, "")) {
+        homepage = domain.uptime_url;
+      }
+    } catch {
+      // keep the funnel's own origin
+    }
+  }
+  return { startUrl: homepage, entryHint: funnel.url };
+}
+
 export async function startFunnelTest(
   supabase: SupabaseClient,
-  funnel: { id: string; name: string; url: string }
+  funnel: { id: string; name: string; url: string; domain_id?: string | null },
+  viewports: Viewport[] = [...VIEWPORTS],
+  // After a successful submit, also click whichever results-page buttons the site
+  // has (Save quote, Book installation, Checkout...) and complete their follow-up
+  // forms. A results page without any is simply skipped. False stops at the submit.
+  testResultsButtons = true
 ) {
+  // Never two tests of one funnel at once, whoever starts them (page, auto-test,
+  // script) - each one submits the form, so overlapping runs mean duplicate leads
+  const { data: current } = await supabase
+    .from("funnels")
+    .select("test_status, test_finished_at")
+    .eq("id", funnel.id)
+    .maybeSingle();
+  if (current?.test_status === "running") {
+    throw new Error("A test is already running for this funnel");
+  }
+  // Cool-down after a finished test: re-testing the same funnel over and over asks
+  // its site for SMS codes again and again, which gets test numbers blocked. A test
+  // that was stopped or crashed (status "error") can be re-run straight away.
+  if ((current?.test_status === "passed" || current?.test_status === "failed") && current.test_finished_at) {
+    const readyAt = new Date(current.test_finished_at).getTime() + RETEST_COOLDOWN_MINUTES * 60_000;
+    if (Date.now() < readyAt) {
+      const mins = Math.ceil((readyAt - Date.now()) / 60_000);
+      throw new Error(
+        `This funnel was tested less than ${RETEST_COOLDOWN_MINUTES} minutes ago. To protect the test phone numbers from being blocked, it can be tested again in ${mins} minute${mins === 1 ? "" : "s"}.`
+      );
+    }
+  }
+
+  const { startUrl, entryHint } = await testEntry(supabase, funnel);
   const res = await funnelTesterFetch("/run-batch", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ items: [{ url: funnel.url, name: funnel.name }], viewports: VIEWPORTS }),
+    body: JSON.stringify({
+      items: [{ url: startUrl, name: funnel.name, entryHint }],
+      viewports,
+      testFinalActions: testResultsButtons,
+    }),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok || !data.batchId) {
@@ -144,6 +223,19 @@ async function readViewportResult(
       const [report] = await reportRes.json();
       if (report) {
         result.failure = report.failure || null;
+        result.site_problem = summarizeWalk(report).siteProblem ?? null;
+        const buttons = flattenFinalActions(report.finalActions);
+        if (buttons.length === 0 && result.status === "passed") {
+          // Results page had none of these buttons - nothing to test, not a failure
+          result.results_buttons = { ok: 0, total: 0, failed: [], payment: "No checkout" };
+        } else if (buttons.length > 0) {
+          result.results_buttons = {
+            ok: buttons.filter(b => !b.error && !b.warning).length,
+            total: buttons.length,
+            failed: buttons.filter(b => b.error || b.warning).map(b => b.label).slice(0, 6),
+            payment: buildSummary(report).find(s => s.title === "Checkout payment")?.value ?? "No checkout",
+          };
+        }
         result.steps = Array.isArray(report.steps) ? report.steps.length : null;
         result.tracking_ok = !!(report.gtmPresentThroughout || report.gtagPresentThroughout);
         result.report_id = await saveReport(supabase, funnelId, "test", viewport, result.status, report);
@@ -153,12 +245,19 @@ async function readViewportResult(
   return result;
 }
 
-// Ask the backend how a running test is going. While it runs, returns the walker's
-// latest message and screenshot; once both devices have finished, saves the outcome.
+// What the page shows for each device while a walk runs
+export interface LiveRun {
+  status: "queued" | "running" | "completed" | "failed";
+  messages: string[];
+  latestScreenshot?: string;
+}
+
+// Ask the backend how a running test is going. While it runs, returns each device's
+// live log and newest screenshot; once every device has finished, saves the outcome.
 export async function syncFunnelTest(
   supabase: SupabaseClient,
   funnel: any
-): Promise<{ funnel: any; message?: string; screenshot?: string }> {
+): Promise<{ funnel: any; message?: string; screenshot?: string; live?: Partial<Record<Viewport, LiveRun>> }> {
   if (funnel.test_status !== "running" || !funnel.test_run_id) {
     return { funnel };
   }
@@ -175,32 +274,45 @@ export async function syncFunnelTest(
   } else {
     const batch = await statusRes.json();
     const runs = batch.items?.[0]?.runs ?? {};
+    // Only the devices chosen for this test have a run
+    const tested = VIEWPORTS.filter(v => runs[v]);
 
-    const active = VIEWPORTS.find(v => runs[v]?.status === "running" || runs[v]?.status === "queued");
+    const active = tested.find(v => runs[v]?.status === "running" || runs[v]?.status === "queued");
     if (active && !batch.done) {
+      const live: Partial<Record<Viewport, LiveRun>> = {};
+      for (const v of tested) {
+        live[v] = {
+          status: runs[v].status,
+          // The log grows by a few lines a second; the page only needs the recent part
+          messages: (runs[v].messages || []).slice(-200),
+          latestScreenshot: runs[v].latestScreenshot,
+        };
+      }
       const messages: string[] = runs[active]?.messages || [];
       return {
         funnel,
         message: `${deviceLabel(active)}: ${messages[messages.length - 1] || "Starting..."}`,
         screenshot: runs[active]?.latestScreenshot,
+        live,
       };
     }
 
-    const results = {} as Record<Viewport, ViewportResult>;
-    for (const v of VIEWPORTS) results[v] = await readViewportResult(supabase, funnel.id, v, runs[v]);
-    const all = VIEWPORTS.map(v => results[v]);
+    const results: Partial<Record<Viewport, ViewportResult>> = {};
+    for (const v of tested) results[v] = await readViewportResult(supabase, funnel.id, v, runs[v]);
+    const all = tested.map(v => results[v]!);
+    if (all.length === 0) all.push({ status: "error", failure: "No device was tested", steps: null, tracking_ok: null, report_id: null });
 
     // Overall result: passed only when both devices passed
     const overall = all.some(r => r.status === "failed") ? "failed" : all.some(r => r.status === "error") ? "error" : "passed";
-    const failures = VIEWPORTS
-      .filter(v => results[v].failure)
-      .map(v => `${deviceLabel(v)}: ${results[v].failure}`);
+    const failures = tested
+      .filter(v => results[v]!.failure)
+      .map(v => `${deviceLabel(v)}: ${results[v]!.failure}`);
 
     update = {
       test_status: overall,
       test_results: results,
       test_failure: failures.length ? failures.join(" | ") : null,
-      test_steps: results.desktop.steps,
+      test_steps: all[0].steps,
       // Missing on either device counts as missing
       test_tracking_ok: all.some(r => r.tracking_ok === false) ? false : all.some(r => r.tracking_ok === true) ? true : null,
     };
@@ -216,6 +328,46 @@ export async function syncFunnelTest(
   if (error) throw error;
 
   return { funnel: updated };
+}
+
+// Ask the backend to stop a running test and its UI check, then mark them stopped.
+// Whatever the walker already submitted stays submitted.
+export async function stopFunnelTest(supabase: SupabaseClient, funnel: any) {
+  const runs: [string | null, string][] = [];
+  if (funnel.test_status === "running" && funnel.test_run_id) runs.push([funnel.test_run_id, "/batch"]);
+  if (funnel.ui_status === "running" && funnel.ui_run_id) runs.push([funnel.ui_run_id, "/check-ui-batch"]);
+
+  for (const [runId, base] of runs) {
+    const res = await funnelTesterFetch(`${base}/${encodeURIComponent(runId!)}/cancel`, { method: "POST" });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      // The backend's own "Unknown batchId": the run already finished or the tester
+      // restarted, so there's nothing left to stop. Any other 404 means a backend
+      // without the cancel endpoint - the run would carry on, so don't pretend.
+      if (!(res.status === 404 && body.includes("Unknown batchId"))) {
+        throw new Error(`Funnel tester could not stop the run (status ${res.status}) - is the backend up to date?`);
+      }
+    }
+  }
+
+  const stoppedAt = new Date().toISOString();
+  const update: Record<string, unknown> = {};
+  if (funnel.test_status === "running") {
+    Object.assign(update, { test_status: "error", test_failure: "Stopped by user", test_finished_at: stoppedAt });
+  }
+  if (funnel.ui_status === "running") {
+    Object.assign(update, { ui_status: "error", ui_results: null, ui_checked_at: stoppedAt });
+  }
+  if (Object.keys(update).length === 0) return funnel;
+
+  const { data: updated, error } = await supabase
+    .from("funnels")
+    .update(update)
+    .eq("id", funnel.id)
+    .select()
+    .single();
+  if (error) throw error;
+  return updated;
 }
 
 // ---------------------------------------------------------------------------
@@ -234,14 +386,18 @@ interface UiViewportResult {
   report_id: string | null;
 }
 
+// The UI check looks at the site's homepage, where visitors meet the quote buttons.
+// Run on a quote page itself, its "Get a Quote" button only scrolls to the form
+// already there, which the check misread as "does nothing".
 export async function startUiCheck(
   supabase: SupabaseClient,
-  funnel: { id: string; name: string; url: string }
+  funnel: { id: string; name: string; url: string; domain_id?: string | null }
 ) {
+  const { startUrl } = await testEntry(supabase, funnel);
   const res = await funnelTesterFetch("/check-ui-batch", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ items: [{ url: funnel.url, name: funnel.name }] }),
+    body: JSON.stringify({ items: [{ url: startUrl, name: funnel.name }] }),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok || !data.batchId) {

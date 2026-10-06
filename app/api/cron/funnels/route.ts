@@ -76,7 +76,7 @@ export async function GET(request: NextRequest) {
     const dueBefore = new Date(Date.now() - RETEST_DAYS * 24 * 60 * 60 * 1000).toISOString();
     const { data: due, error: dueError } = await supabase
       .from("funnels")
-      .select("id, name, url")
+      .select("id, name, url, domain_id")
       .or(`test_finished_at.is.null,test_finished_at.lt.${dueBefore}`)
       .order("test_finished_at", { ascending: true, nullsFirst: true })
       .order("created_at", { ascending: true })

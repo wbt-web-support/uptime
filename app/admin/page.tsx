@@ -93,8 +93,11 @@ export default function AdminPanel() {
     setSuccess(`Monitoring interval set to ${checkInterval}`);
   };
 
-  // Run the four checks for one domain at the same time. Resolves to true only if all
-  // of them returned 2xx (fetch itself does not throw on a 500).
+  // Run the four checks for one domain at the same time. Resolves to the names of the
+  // checks that did not return 2xx (fetch itself does not throw on a 500); empty = all ran.
+  // A failed check means the check itself errored (e.g. WHOIS timed out), not that the
+  // site is down - a down site is a successful uptime check with status false.
+  const CHECK_NAMES = ['Uptime', 'SSL', 'WHOIS', 'IP'] as const;
   const runDomainChecks = async (domain: { id: string; uptime_url: string; domain_name: string }) => {
     const post = (path: string, body: object) =>
       fetch(path, {
@@ -109,7 +112,10 @@ export default function AdminPanel() {
       post('/api/check/whois', { domainId: domain.id, domain: domain.domain_name }),
       post('/api/check/ip', { domainId: domain.id, domain: domain.domain_name })
     ]);
-    return results.every(r => r.status === 'fulfilled' && r.value);
+    return CHECK_NAMES.filter((_, i) => {
+      const r = results[i];
+      return !(r.status === 'fulfilled' && r.value);
+    });
   };
 
   // Check many domains, a few at a time, so one slow site doesn't hold up the rest
@@ -118,6 +124,7 @@ export default function AdminPanel() {
   const checkDomainsBatch = async (list: any[]) => {
     let successes = 0;
     let failures = 0;
+    const failedByCheck: Record<string, number> = {};
     let next = 0;
     setCheckProgress({ done: 0, total: list.length });
 
@@ -125,8 +132,10 @@ export default function AdminPanel() {
       while (next < list.length) {
         const domain = list[next++];
         try {
-          if (await runDomainChecks(domain)) successes++;
+          const failed = await runDomainChecks(domain);
+          if (failed.length === 0) successes++;
           else failures++;
+          failed.forEach(name => { failedByCheck[name] = (failedByCheck[name] || 0) + 1; });
         } catch (err) {
           failures++;
           console.error(`Error checking domain ${domain.domain_name}:`, err);
@@ -136,7 +145,18 @@ export default function AdminPanel() {
     };
 
     await Promise.all(Array.from({ length: Math.min(CHECK_CONCURRENCY, list.length) }, worker));
-    return { successes, failures };
+    return { successes, failures, failedByCheck };
+  };
+
+  // e.g. "150 domains fully checked. 32 had a check that errored: WHOIS 31, SSL 9, IP 9"
+  const describeBatch = ({ successes, failures, failedByCheck }: Awaited<ReturnType<typeof checkDomainsBatch>>) => {
+    const done = `${successes} ${successes === 1 ? 'domain' : 'domains'} fully checked`;
+    if (failures === 0) return `${done}.`;
+    const breakdown = CHECK_NAMES
+      .filter(name => failedByCheck[name])
+      .map(name => `${name} ${failedByCheck[name]}`)
+      .join(', ');
+    return `${done}. ${failures} had a check that errored${breakdown ? `: ${breakdown}` : ''} (the site itself may still be up).`;
   };
 
   const checkAllDomains = async () => {
@@ -147,16 +167,16 @@ export default function AdminPanel() {
     setError("");
 
     try {
-      const { successes, failures } = await checkDomainsBatch(domains);
+      const batch = await checkDomainsBatch(domains);
 
       // Update stats and fetch fresh data
       setCheckResults({
-        successes,
-        failures,
+        successes: batch.successes,
+        failures: batch.failures,
         total: domains.length
       });
 
-      setSuccess(`Domain checks completed: ${successes} successful, ${failures} failed`);
+      setSuccess(describeBatch(batch));
       fetchDomains(); // Refresh data
 
     } catch (err: any) {
@@ -328,13 +348,13 @@ export default function AdminPanel() {
     try {
       setSuccess(`Checking domain: ${domain_name}...`);
 
-      const ok = await runDomainChecks({ id, uptime_url: url, domain_name });
+      const failed = await runDomainChecks({ id, uptime_url: url, domain_name });
 
-      if (ok) {
+      if (failed.length === 0) {
         setSuccess(`Domain ${domain_name} checked successfully!`);
       } else {
         setSuccess("");
-        setError(`Some checks failed for ${domain_name}`);
+        setError(`${failed.join(", ")} check${failed.length === 1 ? "" : "s"} errored for ${domain_name}`);
       }
       fetchDomains(); // Refresh data
     } catch (err: any) {
@@ -412,9 +432,7 @@ export default function AdminPanel() {
       // Get the selected domains from the full domains list
       const domainsToCheck = domains.filter(domain => selectedDomains.includes(domain.id));
 
-      const { successes, failures } = await checkDomainsBatch(domainsToCheck);
-
-      setSuccess(`Domain checks completed: ${successes} successful, ${failures} failed`);
+      setSuccess(describeBatch(await checkDomainsBatch(domainsToCheck)));
       fetchDomains(); // Refresh data
     } catch (error: any) {
       setError(`Error during batch domain check: ${error.message}`);

@@ -287,7 +287,9 @@ export async function checkDomainExpiry(domainId: string, domain: string) {
         'apikey': apiKey,
       },
       cache: 'no-store',
-      signal: AbortSignal.timeout(15000),
+      // apilayer regularly takes 15s+ when several lookups run at once (Check Selected
+      // runs 5 domains in parallel); 15s timed out ~1 in 6 of them
+      signal: AbortSignal.timeout(30000),
     });
 
     if (!response.ok) {
