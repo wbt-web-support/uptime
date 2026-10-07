@@ -4,10 +4,11 @@ import { createClient } from "@/utils/supabase/server";
 // Generate a status badge SVG for the given domain
 export async function GET(
   request: NextRequest,
-  { params }: { params: { domain: string } }
+  // Next.js passes route params as a Promise
+  { params }: { params: Promise<{ domain: string }> }
 ) {
   try {
-    const { domain } = params;
+    const { domain } = await params;
     if (!domain) {
       return new NextResponse("Domain parameter is required", { status: 400 });
     }

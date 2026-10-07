@@ -9,6 +9,7 @@ import {
   deriveProgress,
   deriveStages,
   explainFailure,
+  STAGES,
   type FunnelStages,
   isWaitingForOtp,
   LOG_STYLE,
@@ -17,7 +18,7 @@ import {
   type ProblemOwner,
 } from "@/utils/funnel-report";
 import { createClient } from "@/utils/supabase/client";
-import { FunnelStageMarks } from "@/components/FunnelStageMarks";
+import { FunnelStageMarks, StageCell } from "@/components/FunnelStageMarks";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,6 +28,7 @@ import {
   Check,
   CheckCircle,
   ChevronDown,
+  Clock,
   ChevronUp,
   ExternalLink,
   FileText,
@@ -77,6 +79,9 @@ interface Funnel {
   ui_results: Record<"desktop" | "mobile", UiResult> | null;
   ui_checked_at: string | null;
   created_at: string;
+  // false = switched off on the website's report page: never tested. Missing until
+  // migrations/add_funnel_test_enabled.sql has been run, which counts as on.
+  test_enabled?: boolean | null;
 }
 
 interface UiResult {
@@ -557,7 +562,6 @@ function DeviceDetail({ result, ui, title, icon: Icon, testing, live, uiRunning,
             ) : (
               <div className="text-green-600 dark:text-green-400">No visual problems found</div>
             )}
-            <ReportLink id={ui.report_id} label="Full UI report" />
           </div>
         )}
       </div>
@@ -1494,10 +1498,12 @@ export default function FunnelTestPage() {
   // otherwise it just repeats whichever funnel the walker would pick first.
   // Chooser pages (no form, just cards to each service's form) are skipped the same
   // way: each of their services is tested on its own.
-  const testableFunnels = (list: Funnel[]) => {
+  const candidateFunnels = (list: Funnel[]) => {
     const hostsWithFunnels = new Set(list.filter(f => !isHomepage(f) && !isChooserFunnel(f)).map(hostOf));
     return list.filter(f => !isChooserFunnel(f) && (!isHomepage(f) || !hostsWithFunnels.has(hostOf(f))));
   };
+  // ...minus the funnels switched off on the website's report page
+  const testableFunnels = (list: Funnel[]) => candidateFunnels(list).filter(f => f.test_enabled !== false);
 
   // ---- Plain status of a funnel and a website, for the list and the summary --
   // The devices whose results the list is showing
@@ -1630,171 +1636,223 @@ export default function FunnelTestPage() {
   };
 
   // One row per website - the same layout whether it has one funnel or several
+  // One table row per website, laid out like the Home page's domain table
   const renderSiteGroup = (g: SiteGroup) => {
-    const key = `site:${g.key}`;
-    const open = expanded.has(key);
     const single = g.funnels.length === 1 ? g.funnels[0] : null;
-    const { toTest, running, passed, failed, untested, state, lastTested } = siteSummary(g);
+    const { toTest, running, failed, untested, state, lastTested } = siteSummary(g);
     // How long the whole website took: its funnels' last tests added up
     const durations = toTest.map(testDurationMs).filter((ms): ms is number => ms !== null);
     const siteTestMs = durations.length ? durations.reduce((a, b) => a + b, 0) : null;
     const total = toTest.length;
-    const pill = "inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold";
+    // Every funnel this website could have tested, including ones switched off
+    const allFunnels = candidateFunnels(g.funnels);
+    const switchedOff = allFunnels.length - total;
     const status =
-      state === "running"
-        ? { text: `Testing${running && !single ? ` ${serviceLabel(running)}` : ""}…`, cls: "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-400" }
+      total === 0 && allFunnels.length > 0
+        ? { text: "All funnels switched off", cls: "bg-gray-100 text-gray-800 dark:bg-muted dark:text-muted-foreground" }
+        : state === "running"
+        ? { text: `Testing${running && !single ? ` ${serviceLabel(running)}` : ""}…`, cls: "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300" }
         : state === "failed"
-          ? { text: total === 1 ? "Not working" : `${failed} of ${total} failing`, cls: "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-400" }
+          ? { text: total === 1 ? "Not working" : `${failed} of ${total} failing`, cls: "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300" }
           : state === "passed"
-            ? { text: total === 1 ? "Working" : `All ${total} working`, cls: "bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-400" }
+            ? { text: total === 1 ? "Working" : `All ${total} working`, cls: "bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300" }
             : state === "partial"
-              ? { text: `${untested} not tested yet`, cls: "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-400" }
-              : { text: "Not tested yet", cls: "bg-muted text-muted-foreground" };
+              ? { text: `${untested} not tested yet`, cls: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300" }
+              : { text: "Not tested yet", cls: "bg-gray-100 text-gray-800 dark:bg-muted dark:text-muted-foreground" };
     // The first failing funnel and why, so the row says what's wrong without opening it
     const firstFailing = toTest.find(f => funnelState(f) === "failed");
     const reason = firstFailing ? failureReason(firstFailing) : null;
     const liveMessage = running ? testMessages[running.id] : undefined;
+    // The website's stages: a stage failed if it failed on any of its funnels
+    const stages = combineStages(toTest.map(funnelStages).filter((s): s is FunnelStages => !!s));
+    const reportHref = `/funnel-test/site/${encodeURIComponent(g.key)}`;
 
     return (
-      <div key={key}>
-        <div className="flex cursor-pointer flex-wrap items-start gap-3 p-4 hover:bg-muted/50" onClick={() => toggleExpand(key)}>
-          <StateIcon state={state} size="lg" />
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-x-2">
-              <Link
-                href={`/funnel-test/site/${encodeURIComponent(g.key)}`}
-                onClick={e => e.stopPropagation()}
-                className="truncate font-medium hover:text-brand hover:underline"
-                title="Open the full report for this website"
+      <tr key={g.key} className="align-top hover:bg-muted/20">
+        <td className="px-4 py-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <Link href={reportHref} className="text-base font-medium hover:text-brand" title="Open the full report for this website">
+              {g.label}
+            </Link>
+            {isManualSite(g) && (
+              <span
+                className="rounded-full bg-violet-100 px-2 py-0.5 text-[11px] font-medium text-violet-800 dark:bg-violet-950 dark:text-violet-300"
+                title="Added on this page by name and landing page - not a monitored client"
               >
-                {g.label}
-              </Link>
-              <span className="truncate text-xs text-muted-foreground">{g.url.replace(/^https?:\/\//, "").replace(/\/$/, "")}</span>
-            </div>
-            {/* Each funnel's stages at a glance: Form → SMS → Thank-you → Save & Checkout */}
-            <div className="mt-2 space-y-1">
-              {toTest.map(f => (
-                <FunnelStageMarks key={f.id} stages={funnelStages(f)} label={single ? undefined : serviceLabel(f)} />
-              ))}
-            </div>
-            {state === "running" && liveMessage ? (
-              <div className="mt-1 truncate text-xs text-blue-600 dark:text-blue-400" title={liveMessage}>{liveMessage}</div>
-            ) : reason ? (
-              <div className="mt-1 truncate text-xs text-red-600 dark:text-red-400" title={reason}>
-                {!single && firstFailing ? `${serviceLabel(firstFailing)} – ` : ""}{reason}
-              </div>
-            ) : null}
-          </div>
-          <div className="flex flex-col items-end gap-1">
-            <span className={`${pill} ${status.cls}`}>{status.text}</span>
-            {lastTested && state !== "running" && (
-              <span className="text-[11px] text-muted-foreground">
-                Tested {formatTimeAgo(lastTested).toLowerCase()}
-                {siteTestMs !== null && ` · took ${formatDuration(siteTestMs)}`}
+                Added manually
               </span>
             )}
           </div>
+          <a
+            href={g.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-1 flex items-center gap-1 text-xs text-muted-foreground hover:text-brand"
+          >
+            <Globe className="h-3.5 w-3.5" />
+            {g.key}
+            <ExternalLink className="h-3 w-3" />
+          </a>
+          {allFunnels.length > 1 && (
+            <div
+              className="mt-1 max-w-[260px] truncate text-xs text-muted-foreground"
+              title={`Tested: ${toTest.map(serviceLabel).join(", ") || "none"}${switchedOff ? `\nSwitched off: ${allFunnels.filter(f => f.test_enabled === false).map(serviceLabel).join(", ")}` : ""}`}
+            >
+              {switchedOff ? `${total} of ${allFunnels.length} funnels tested` : `${total} funnels`}: {toTest.map(serviceLabel).join(", ") || "none"}
+            </div>
+          )}
+        </td>
+        <td className="px-4 py-4">
+          <span className={`inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ${status.cls}`}>
+            {state === "running" && <RefreshCw className="h-3 w-3 animate-spin" />}
+            {status.text}
+          </span>
+          {state === "running" && liveMessage ? (
+            <div className="mt-1.5 max-w-[240px] truncate text-xs text-blue-700 dark:text-blue-300" title={liveMessage}>
+              {liveMessage}
+            </div>
+          ) : reason ? (
+            <div className="mt-1.5 max-w-[240px] text-xs text-red-700 dark:text-red-400" title={reason}>
+              {!single && firstFailing ? `${serviceLabel(firstFailing)}: ` : ""}
+              {reason}
+            </div>
+          ) : null}
+        </td>
+        {STAGES.map(s => (
+          <td key={s.key} className="px-2 py-4 text-center">
+            <StageCell state={stages?.[s.key] ?? null} label={s.label} />
+          </td>
+        ))}
+        <td className="px-4 py-4">
+          {lastTested ? (
+            <div className="flex items-start gap-2">
+              <Clock className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+              <div>
+                <div className="whitespace-nowrap">{formatTimeAgo(lastTested)}</div>
+                {siteTestMs !== null && (
+                  <div className="text-xs text-muted-foreground">took {formatDuration(siteTestMs)}</div>
+                )}
+              </div>
+            </div>
+          ) : (
+            <span className="text-xs text-muted-foreground">Never</span>
+          )}
+        </td>
+        {/* Run test: just the icon - the column header says what it does */}
+        <td className="px-2 py-4 text-center">
           {running ? (
             <Button
-              size="sm"
+              size="icon"
               variant="outline"
-              className="text-red-600"
+              className="h-8 w-8 text-red-600"
               disabled={stoppingIds.has(running.id)}
-              onClick={e => {
-                e.stopPropagation();
+              onClick={() => {
                 if (bulkProgress) {
                   stopTestAllRef.current = true;
                   setStopRequested(true);
                 }
                 stopTest(running, !bulkProgress);
               }}
-              title="Stop testing this site"
+              title={stoppingIds.has(running.id) ? "Stopping…" : "Stop testing this website"}
+              aria-label="Stop testing this website"
             >
-              <Square className="mr-1.5 h-3.5 w-3.5" />
-              {stoppingIds.has(running.id) ? "Stopping…" : "Stop"}
+              <Square className="h-3.5 w-3.5" />
             </Button>
           ) : (
             <Button
-              size="sm"
+              size="icon"
               variant="outline"
-              disabled={!!bulkProgress}
-              onClick={e => {
-                e.stopPropagation();
-                setExpanded(prev => new Set(prev).add(key));
-                if (single) testOne(single);
-                else testAll(toTest, g.label, true);
-              }}
-              title={single ? "Test this funnel, starting from the homepage" : "Test every funnel on this site, one by one, each starting from the homepage"}
+              className="h-8 w-8"
+              disabled={!!bulkProgress || total === 0}
+              onClick={() => (total === 1 ? testOne(toTest[0]) : testAll(toTest, g.label, true))}
+              title={total === 0 ? "All funnels are switched off" : single ? "Run test: this funnel, starting from the homepage" : "Run test: every funnel on this website, one by one"}
+              aria-label={`Run test on ${g.label}`}
             >
-              <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
-              Run test
+              <RefreshCw className="h-4 w-4" />
             </Button>
           )}
-          {open ? <ChevronUp className="mt-2 h-4 w-4 text-muted-foreground" /> : <ChevronDown className="mt-2 h-4 w-4 text-muted-foreground" />}
-        </div>
-        {open &&
-          (single ? (
-            renderFunnelDetail(single)
-          ) : (
-            <div className="border-t bg-muted/20">
-              <div className="divide-y">{g.funnels.map(f => renderFunnelRow(f))}</div>
-              <div className="flex justify-end border-t px-4 py-2">
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="text-red-600 hover:text-red-700"
-                  disabled={!!running}
-                  onClick={() => deleteSite(g)}
-                  title="Remove this website and all its funnels from funnel testing"
-                >
-                  <Trash2 className="mr-1.5 h-3.5 w-3.5" />
-                  Remove website
-                </Button>
-              </div>
-            </div>
-          ))}
-      </div>
+        </td>
+        <td className="px-4 py-4 text-right">
+          <Link href={reportHref} className="btn-outline inline-flex whitespace-nowrap py-1.5 text-xs">
+            See Details
+          </Link>
+        </td>
+      </tr>
     );
   };
 
+  // The websites as a table, with the same look as the Home page
+  const renderSiteTable = (sites: SiteGroup[]) => (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="bg-muted/50">
+            <th className="px-4 py-3 text-left font-medium">Website</th>
+            <th className="px-4 py-3 text-left font-medium">Status</th>
+            {STAGES.map(s => (
+              <th key={s.key} className="px-2 py-3 text-center font-medium" title={s.label}>
+                {s.short}
+              </th>
+            ))}
+            <th className="px-4 py-3 text-left font-medium">Last Test</th>
+            <th className="px-2 py-3 text-center font-medium">Run test</th>
+            <th className="px-4 py-3 text-right font-medium">Actions</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-border">{sites.map(renderSiteGroup)}</tbody>
+      </table>
+    </div>
+  );
+
+  // Website counts for the result filter, over every website
+  const allSummaries = allSiteGroups.map(siteSummary);
+  const siteCounts: Record<string, number> = {
+    all: allSiteGroups.length,
+    passed: allSummaries.filter(s => s.state === "passed").length,
+    failed: allSummaries.filter(s => s.state === "failed").length,
+    untested: allSummaries.filter(s => s.untested > 0).length,
+  };
+
   return (
-    <div className="mx-auto w-full max-w-5xl px-4 py-8">
-      <div className="mb-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="flex items-center gap-2 text-2xl font-bold">
-            <Filter className="h-6 w-6" />
-            Funnel Test
-          </h1>
+    <div className="container mx-auto px-4 py-10">
+      {/* Header: same layout as the Home page's "Domain Status" */}
+      <div className="mb-4 flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+        <div className="flex flex-col gap-1">
+          <h1 className="text-3xl font-bold text-foreground">Funnel Test</h1>
+          <p className="mt-1 text-muted-foreground">
+            Check each website&apos;s quote form works: the form, the SMS verification and the thank-you page
+          </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <div className="relative">
-            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+        <div className="flex w-full flex-col flex-wrap items-center gap-3 sm:flex-row lg:w-auto lg:justify-end">
+          <div className="relative w-full sm:w-64">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
-              placeholder="Search funnels…"
+              placeholder="Search websites…"
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
-              className="w-56 pl-8"
+              className="h-9 pl-9"
             />
           </div>
           <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="w-40">
-              <SelectValue placeholder="Result" />
+            <SelectTrigger className="h-9 w-full sm:w-44">
+              <SelectValue placeholder="Status" />
             </SelectTrigger>
             <SelectContent>
               {statusFilters.map(f => (
                 <SelectItem key={f.id} value={f.id}>
-                  {f.name}{f.count !== undefined ? ` (${f.count})` : ""}
+                  {f.id === "all" ? "Status: All" : f.name}
+                  {siteCounts[f.id] !== undefined ? ` (${siteCounts[f.id]})` : f.count !== undefined ? ` (${f.count})` : ""}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
           {clientOptions.length > 1 && (
             <Select value={clientFilter} onValueChange={setClientFilter}>
-              <SelectTrigger className="w-40">
+              <SelectTrigger className="h-9 w-full sm:w-44">
                 <SelectValue placeholder="Client" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All clients</SelectItem>
+                <SelectItem value="all">Client: All</SelectItem>
                 {clientOptions.map(c => (
                   <SelectItem key={c} value={c}>
                     {c}
@@ -1803,87 +1861,19 @@ export default function FunnelTestPage() {
               </SelectContent>
             </Select>
           )}
+          {/* Which device's results the table shows - tests always run on both */}
+          <Select value={resultView} onValueChange={v => setResultView(v as DeviceChoice)}>
+            <SelectTrigger className="h-9 w-full whitespace-nowrap sm:w-56" title="Which device's results the table shows. Tests always run on both.">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="both">Results: Desktop + Mobile</SelectItem>
+              <SelectItem value="desktop">Results: Desktop</SelectItem>
+              <SelectItem value="mobile">Results: Mobile</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
       </div>
-
-      {/* At a glance: how many websites work, fail or still need testing. A card
-          filters the list to those websites; clicking it again shows them all. */}
-      {!loading && funnels.length > 0 && (() => {
-        const summaries = allSiteGroups.map(siteSummary);
-        const smsUsed = smsUsage?.numbers.reduce((sum, n) => sum + n.used, 0) ?? 0;
-        const smsTotal = smsUsage ? smsUsage.limit * smsUsage.numbers.length : 0;
-        const cards = [
-          { id: "all", label: "Websites", value: allSiteGroups.length, hint: `${funnels.length} funnels`, cls: "text-foreground" },
-          { id: "passed", label: "All working", value: summaries.filter(s => s.state === "passed").length, hint: "every funnel passed", cls: "text-green-600 dark:text-green-400" },
-          { id: "failed", label: "Problems", value: summaries.filter(s => s.state === "failed").length, hint: "at least one funnel failing", cls: "text-red-600 dark:text-red-400" },
-          { id: "untested", label: "Not tested yet", value: summaries.filter(s => s.untested > 0).length, hint: "websites with untested funnels", cls: "text-muted-foreground" },
-        ];
-        return (
-          <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-5">
-            {cards.map(c => (
-              <button
-                key={c.id}
-                type="button"
-                onClick={() => setStatusFilter(statusFilter === c.id ? "all" : c.id)}
-                title={c.id === "all" ? "Show every website" : `Show only: ${c.label.toLowerCase()}`}
-                className={`rounded-lg border p-3 text-left transition-colors hover:bg-muted/50 ${
-                  statusFilter === c.id ? "border-brand ring-1 ring-brand" : ""
-                }`}
-              >
-                <div className="text-xs text-muted-foreground">{c.label}</div>
-                <div className={`text-2xl font-bold ${c.cls}`}>{c.value}</div>
-                <div className="truncate text-[11px] text-muted-foreground">{c.hint}</div>
-              </button>
-            ))}
-            {smsUsage && smsTotal > 0 && (
-              <div
-                className="col-span-2 rounded-lg border p-3 sm:col-span-1"
-                title={`${smsUsage.numbers.map(n => `${n.number}: ${n.used} of ${smsUsage.limit}`).join("\n")}\n\nEach test number gets at most ${smsUsage.limit} SMS codes a day so it isn't blocked; tests pause until tomorrow once all are used.`}
-              >
-                <div className="text-xs text-muted-foreground">SMS codes today</div>
-                <div className={`text-2xl font-bold ${smsUsed >= smsTotal ? "text-red-600" : smsUsed >= smsTotal * 0.75 ? "text-amber-600" : ""}`}>
-                  {smsUsed}
-                  <span className="text-sm font-normal text-muted-foreground"> / {smsTotal}</span>
-                </div>
-                {smsWarnings.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setSmsPopupOpen(true)}
-                    className={`mt-0.5 text-[11px] font-semibold underline-offset-2 hover:underline ${
-                      smsWarnings.some(w => w.level === "red") ? "text-red-600 dark:text-red-400" : "text-amber-600"
-                    }`}
-                  >
-                    ⚠ View warnings
-                  </button>
-                )}
-                {/* Each number: used / limit, or why it can't be used right now */}
-                <div className="mt-1 space-y-0.5">
-                  {smsUsage.numbers.map(n => {
-                    const full = n.used >= smsUsage.limit;
-                    const near = n.used >= Math.ceil(smsUsage.limit * 0.75);
-                    return (
-                      <div key={n.number} className="flex items-center justify-between gap-1 text-[11px]">
-                        <span className="text-muted-foreground">…{n.number.slice(-4)}</span>
-                        <span
-                          className={
-                            n.blockedAt || full
-                              ? "font-semibold text-red-600 dark:text-red-400"
-                              : near
-                                ? "font-semibold text-amber-600"
-                                : "text-muted-foreground"
-                          }
-                        >
-                          {n.blockedAt ? "blocked by Twilio" : full ? `${n.used}/${smsUsage.limit} · used up` : `${n.used}/${smsUsage.limit}`}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-          </div>
-        );
-      })()}
 
       {/* Pop-up when a test number is blocked, used up or nearly used up */}
       {smsPopupOpen && smsWarnings.length > 0 && (
@@ -1931,37 +1921,48 @@ export default function FunnelTestPage() {
         </div>
       )}
 
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-          <p className="text-xs text-muted-foreground">
-            Showing {visibleSites.length} website{visibleSites.length === 1 ? "" : "s"}
-          </p>
-          <div className={`${SHOW_DEVICE_CHOICE ? "flex" : "hidden"} flex-wrap items-center gap-1.5 text-xs`}>
-            <span className="text-muted-foreground">Full test on:</span>
-            {(["both", "desktop", "mobile"] as DeviceChoice[]).map(choice => (
-              <button
-                key={choice}
-                type="button"
-                onClick={() => setDeviceChoice(choice)}
-                disabled={!!bulkProgress}
-                aria-pressed={deviceChoice === choice}
-                className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 font-medium transition-colors ${
-                  deviceChoice === choice ? "border-brand bg-brand text-white" : "border-border hover:bg-muted"
-                }`}
-              >
-                {choice === "both" ? (
-                  <><Monitor className="h-3 w-3" />+<Smartphone className="h-3 w-3" /> Both</>
-                ) : choice === "desktop" ? (
-                  <><Monitor className="h-3 w-3" /> Desktop</>
-                ) : (
-                  <><Smartphone className="h-3 w-3" /> Mobile</>
-                )}
-              </button>
-            ))}
-          </div>
-          <Link href="/funnel-test/issues" className="inline-flex items-center gap-1 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">
-            <AlertCircle className="h-3 w-3" /> Issues overview
+      {/* Toolbar: what's shown and SMS codes on the left, actions on the right */}
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border-y py-3">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm text-muted-foreground">
+          <span>
+            Showing <span className="font-medium text-foreground">{visibleSites.length}</span> of {allSiteGroups.length} websites
+          </span>
+          <Link href="/funnel-test/issues" className="inline-flex items-center gap-1 hover:text-foreground hover:underline">
+            <AlertCircle className="h-3.5 w-3.5" /> Issues overview
           </Link>
+          {smsUsage && smsUsage.numbers.length > 0 && (
+            <span
+              className="inline-flex flex-wrap items-center gap-x-2"
+              title={`SMS verification codes each test number has received today, out of ${smsUsage.limit} a day.`}
+            >
+              <Smartphone className="h-3.5 w-3.5" /> SMS today:
+              {smsUsage.numbers.map(n => (
+                <span
+                  key={n.number}
+                  className={
+                    n.blockedAt || n.used >= smsUsage.limit
+                      ? "font-medium text-red-600 dark:text-red-400"
+                      : n.used >= Math.ceil(smsUsage.limit * 0.75)
+                        ? "font-medium text-amber-600"
+                        : ""
+                  }
+                >
+                  …{n.number.slice(-4)} {n.blockedAt ? "blocked" : `${n.used}/${smsUsage.limit}`}
+                </span>
+              ))}
+              {smsWarnings.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setSmsPopupOpen(true)}
+                  className={`font-medium underline-offset-2 hover:underline ${
+                    smsWarnings.some(w => w.level === "red") ? "text-red-600 dark:text-red-400" : "text-amber-600"
+                  }`}
+                >
+                  ⚠ View warnings
+                </button>
+              )}
+            </span>
+          )}
         </div>
         <div className="flex flex-wrap gap-2">
           <Button
@@ -1993,7 +1994,7 @@ export default function FunnelTestPage() {
                 variant="outline"
                 onClick={() => testAll()}
                 disabled={loading || filteredFunnels.length === 0}
-                title="Test every funnel of every site in the list, one by one"
+                title="Test every website shown, one by one"
               >
                 <Play className="mr-1.5 h-3.5 w-3.5" />
                 Test all
@@ -2014,33 +2015,6 @@ export default function FunnelTestPage() {
             {showAddForm ? "Cancel" : "Add website"}
           </Button>
         </div>
-      </div>
-
-      {/* Which device's results the list shows - tests always run on both */}
-      <div className="mb-4 flex flex-wrap items-center gap-1.5 text-xs">
-        <span className="text-muted-foreground">Show results for:</span>
-        {(["both", "desktop", "mobile"] as DeviceChoice[]).map(view => (
-          <button
-            key={view}
-            type="button"
-            onClick={() => setResultView(view)}
-            aria-pressed={resultView === view}
-            className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 font-medium transition-colors ${
-              resultView === view ? "border-brand bg-brand text-white" : "border-border hover:bg-muted"
-            }`}
-          >
-            {view === "both" ? (
-              <><Monitor className="h-3.5 w-3.5" /><Smartphone className="h-3.5 w-3.5" /> Desktop + Mobile</>
-            ) : view === "desktop" ? (
-              <><Monitor className="h-3.5 w-3.5" /> Desktop</>
-            ) : (
-              <><Smartphone className="h-3.5 w-3.5" /> Mobile</>
-            )}
-          </button>
-        ))}
-        <span className="ml-2 hidden text-muted-foreground sm:inline">
-          ✓ worked · ✕ failed · – not on this funnel · · not reached
-        </span>
       </div>
 
       {bulkProgress && (
@@ -2112,8 +2086,8 @@ export default function FunnelTestPage() {
             </Button>
           </div>
           <p className="mt-2 text-xs text-muted-foreground">
-            Its quote funnels (boiler, air con, solar…) are found on the landing page and added with it. It appears under
-            &quot;Added manually&quot; and is tested like every other website.
+            Its quote funnels (boiler, air con, solar…) are found on the landing page and added with it. It joins the list
+            with an &quot;Added manually&quot; tag and is tested like every other website.
           </p>
         </form>
       )}
@@ -2138,29 +2112,13 @@ export default function FunnelTestPage() {
         </div>
       ) : visibleSites.length === 0 ? (
         <p className="py-12 text-center text-sm text-muted-foreground">
-          {funnels.length === 0 ? 'No funnels yet. Click "Add funnel" to add one.' : "No funnels found."}
+          {funnels.length === 0 ? 'No websites yet. Click "Add website" to add one.' : "No websites match these filters."}
         </p>
       ) : (
         <>
           {/* Client websites first, then the ones added by hand on this page */}
-          {visibleSites.some(g => !isManualSite(g)) && (
-            <div className="divide-y rounded-lg border">
-              {visibleSites.filter(g => !isManualSite(g)).map(renderSiteGroup)}
-            </div>
-          )}
-          {visibleSites.some(isManualSite) && (
-            <>
-              <h2 className="mb-2 mt-6 flex items-center gap-2 text-sm font-semibold">
-                Added manually
-                <span className="font-normal text-muted-foreground">
-                  {visibleSites.filter(isManualSite).length} website{visibleSites.filter(isManualSite).length === 1 ? "" : "s"} · not monitored clients
-                </span>
-              </h2>
-              <div className="divide-y rounded-lg border">
-                {visibleSites.filter(isManualSite).map(renderSiteGroup)}
-              </div>
-            </>
-          )}
+          {/* One list for every website; ones added by hand carry an "Added manually" tag */}
+          {renderSiteTable(visibleSites)}
         </>
       )}
     </div>

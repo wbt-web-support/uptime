@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/utils/pagespeed";
 import { probeUrl } from "@/utils/monitoring";
 import { startFunnelTest, syncFunnelTest } from "@/utils/funnel-tester";
+import { isChooserFunnel } from "@/utils/funnel-discovery";
 
 // Scheduled funnel tester: tests funnels automatically, one at a time.
 //
@@ -74,14 +75,21 @@ export async function GET(request: NextRequest) {
 
     // 3. Next due funnels: never tested first, then the longest ago
     const dueBefore = new Date(Date.now() - RETEST_DAYS * 24 * 60 * 60 * 1000).toISOString();
-    const { data: due, error: dueError } = await supabase
+    // "*" rather than naming test_enabled, so this keeps working before
+    // migrations/add_funnel_test_enabled.sql has been run
+    const { data: dueRows, error: dueError } = await supabase
       .from("funnels")
-      .select("id, name, url, domain_id")
+      .select("*")
       .or(`test_finished_at.is.null,test_finished_at.lt.${dueBefore}`)
       .order("test_finished_at", { ascending: true, nullsFirst: true })
       .order("created_at", { ascending: true })
-      .limit(MAX_PROBES_PER_RUN);
+      .limit(MAX_PROBES_PER_RUN * 5);
     if (dueError) throw dueError;
+    // Funnels switched off on the Funnel Test page, and chooser pages (no form of
+    // their own - their services are tested instead), are never tested automatically
+    const due = (dueRows ?? [])
+      .filter(f => f.test_enabled !== false && !isChooserFunnel(f))
+      .slice(0, MAX_PROBES_PER_RUN);
 
     if (!due || due.length === 0) {
       return NextResponse.json({ message: `All funnels tested within the last ${RETEST_DAYS} days` });

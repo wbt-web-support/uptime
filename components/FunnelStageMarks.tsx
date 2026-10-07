@@ -10,6 +10,26 @@ const STAGE_STYLE: Record<StageState, { mark: string; cls: string; note: string 
   unknown: { mark: "?", cls: "border-border text-muted-foreground", note: "not recorded for this older test - run it again" },
 };
 
+// One stage as a table cell: a round ✓ / ✕ mark with a short word under it
+const CELL_STYLE: Record<StageState, { mark: string; cls: string; word: string }> = {
+  ok: { mark: "✓", cls: "bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-400", word: "Working" },
+  failed: { mark: "✕", cls: "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-400", word: "Failed" },
+  none: { mark: "–", cls: "bg-muted text-muted-foreground", word: "Not needed" },
+  pending: { mark: "·", cls: "border border-dashed border-border text-muted-foreground", word: "Not reached" },
+  unknown: { mark: "?", cls: "bg-muted text-muted-foreground", word: "Run again" },
+};
+
+export function StageCell({ state, label }: { state: StageState | null; label: string }) {
+  if (!state) return <span className="text-xs text-muted-foreground">—</span>;
+  const st = CELL_STYLE[state];
+  return (
+    <span className="inline-flex flex-col items-center gap-0.5" title={`${label}: ${STAGE_STYLE[state].note}`}>
+      <span className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-sm font-semibold ${st.cls}`}>{st.mark}</span>
+      <span className="text-[11px] text-muted-foreground">{st.word}</span>
+    </span>
+  );
+}
+
 export function FunnelStageMarks({ stages, label, full = false }: { stages: FunnelStages | null; label?: string; full?: boolean }) {
   return (
     <div className="flex flex-wrap items-center gap-1">

@@ -121,7 +121,7 @@ export default function FunnelIssuesPage() {
       {backLink}
       <h1 className="text-2xl font-bold">Issues</h1>
       <p className="mb-6 text-sm text-muted-foreground">
-        Every saved funnel test run, grouped by what went wrong. The last 5 runs per funnel and device are kept.
+        Every saved funnel test run, grouped by what went wrong. The last 2 runs per funnel and device are kept.
       </p>
 
       {!runs ? (

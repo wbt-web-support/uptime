@@ -402,7 +402,7 @@ export function FunnelReportView({ id, onLoaded }: { id: string; onLoaded?: (met
       const { data, error } = await supabase.from("funnel_reports").select("*").eq("id", id).maybeSingle();
       if (cancelled) return;
       if (error || !data) {
-        setError(error?.message || "Report not found. Only the 5 most recent reports per funnel and device are kept.");
+        setError(error?.message || "Report not found. Only the 2 most recent reports per funnel and device are kept.");
         return;
       }
       setRow(data);

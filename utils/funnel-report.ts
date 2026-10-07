@@ -459,11 +459,12 @@ export type StageState = "ok" | "failed" | "none" | "pending" | "unknown";
 export type StageKey = "form" | "otp" | "results" | "buttons";
 export type FunnelStages = Record<StageKey, StageState>;
 
+// What's shown: three stages. Save quote and Checkout live on the thank-you /
+// results page, so they're part of its stage ("buttons" is kept for details).
 export const STAGES: { key: StageKey; label: string; short: string }[] = [
-  { key: "form", label: "Quote form", short: "Form" },
-  { key: "otp", label: "SMS verified", short: "SMS" },
-  { key: "results", label: "Thank-you / results page", short: "Thank-you" },
-  { key: "buttons", label: "Save quote & Checkout", short: "Save & Checkout" },
+  { key: "form", label: "Quote form", short: "Quote form" },
+  { key: "otp", label: "Verify (SMS code)", short: "Verify" },
+  { key: "results", label: "Thank-you page, incl. Save quote & Checkout", short: "Thank-you page" },
 ];
 
 const OTP_FAILURE = /OTP|SMS code|verification code/i;
@@ -493,7 +494,6 @@ export function deriveStages(result: {
         : completed
           ? "none"
           : "pending";
-  const results: StageState = completed ? "ok" : form === "ok" && otp !== "failed" && !stopped ? "failed" : "pending";
   const buttons: StageState = !completed
     ? "pending"
     : !result.results_buttons
@@ -503,6 +503,12 @@ export function deriveStages(result: {
         : result.results_buttons.ok === result.results_buttons.total
           ? "ok"
           : "failed";
+  // The thank-you page counts as working only if its Save quote / Checkout buttons did too
+  const results: StageState = completed
+    ? buttons === "failed" ? "failed" : "ok"
+    : form === "ok" && otp !== "failed" && !stopped
+      ? "failed"
+      : "pending";
   return { form, otp, results, buttons };
 }
 

@@ -12,24 +12,43 @@ const SelectGroup = SelectPrimitive.Group
 
 const SelectValue = SelectPrimitive.Value
 
+const TRIGGER_CLASS =
+  "flex h-10 w-full items-center justify-between rounded-md border border-input bg-transparent px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+
+// True once the page is running in the browser
+function useMounted() {
+  const [mounted, setMounted] = React.useState(false)
+  React.useEffect(() => setMounted(true), [])
+  return mounted
+}
+
+// Radix gives the trigger an auto-generated aria-controls id, and the server and
+// the browser can number those ids differently - React then reports "A tree
+// hydrated but some attributes ... didn't match" on every page with a dropdown.
+// Until the page is running in the browser, draw an identical-looking button
+// without that id; the real trigger takes over straight after.
 const SelectTrigger = React.forwardRef<
   React.ElementRef<typeof SelectPrimitive.Trigger>,
   React.ComponentPropsWithoutRef<typeof SelectPrimitive.Trigger>
->(({ className, children, ...props }, ref) => (
-  <SelectPrimitive.Trigger
-    ref={ref}
-    className={cn(
-      "flex h-10 w-full items-center justify-between rounded-md border border-input bg-transparent px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50",
-      className
-    )}
-    {...props}
-  >
-    {children}
-    <SelectPrimitive.Icon asChild>
-      <ChevronDown className="h-4 w-4 opacity-50" />
-    </SelectPrimitive.Icon>
-  </SelectPrimitive.Trigger>
-))
+>(({ className, children, ...props }, ref) => {
+  const mounted = useMounted()
+  if (!mounted) {
+    return (
+      <button type="button" className={cn(TRIGGER_CLASS, className)} disabled={props.disabled} aria-haspopup="listbox">
+        {children}
+        <ChevronDown className="h-4 w-4 opacity-50" />
+      </button>
+    )
+  }
+  return (
+    <SelectPrimitive.Trigger ref={ref} className={cn(TRIGGER_CLASS, className)} {...props}>
+      {children}
+      <SelectPrimitive.Icon asChild>
+        <ChevronDown className="h-4 w-4 opacity-50" />
+      </SelectPrimitive.Icon>
+    </SelectPrimitive.Trigger>
+  )
+})
 SelectTrigger.displayName = SelectPrimitive.Trigger.displayName
 
 const SelectContent = React.forwardRef<

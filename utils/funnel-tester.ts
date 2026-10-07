@@ -36,8 +36,9 @@ type Viewport = (typeof VIEWPORTS)[number];
 
 const deviceLabel = (v: Viewport) => (v === "desktop" ? "Desktop" : "Mobile");
 
-// How many full reports to keep per funnel, kind and device
-const REPORTS_KEPT = 5;
+// How many full reports to keep per funnel, kind and device: the latest test and
+// the one before it. Saving a 3rd deletes the oldest, so the database stays small.
+const REPORTS_KEPT = 2;
 
 // Copy a finished report into the database (the tester's own files can be wiped by
 // a redeploy) and drop the oldest beyond REPORTS_KEPT. Returns the new row's id.
