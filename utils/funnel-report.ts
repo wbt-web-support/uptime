@@ -10,6 +10,10 @@ export interface PlannedActionLike {
   frame?: number;
 }
 
+// A results-page button that leads to paying - sites rarely say "checkout":
+// "Secure your online price", "Buy now", "Book & pay"...
+export const CHECKOUT_BUTTON = /checkout|check out|secure your (online )?price|buy now|book (&|and) pay|pay (now|deposit|online)|reserve|place (your )?order|lock in/i;
+
 export interface FinalActionLike {
   label: string;
   screenshot: string | null;
@@ -469,6 +473,10 @@ export const STAGES: { key: StageKey; label: string; short: string }[] = [
 
 const OTP_FAILURE = /OTP|SMS code|verification code/i;
 
+// Every funnel must have Google Tag Manager; a quote form without it isn't working
+export const GTM_MISSING = "Google Tag Manager (GTM) not found on the quote form";
+export const gtmMissing = (result: { gtm_found?: boolean | null } | null | undefined) => result?.gtm_found === false;
+
 // From one device's result: did it get through the form, the SMS code, to the
 // thank-you/results page, and did the results-page buttons work?
 export function deriveStages(result: {
@@ -616,7 +624,7 @@ export function buildSummary(report: WalkReport): SummaryItem[] {
 
   const paymentConfirmed = (report.apiCalls ?? []).some(c => /^200 POST \S*api\.stripe\.com\/v1\/payment_intents\/\S+\/confirm/.test(c));
   // Sites rarely label it "checkout" - e.g. "Secure your online price"
-  const hasCheckout = allButtons.some(b => /checkout|check out|secure your (online )?price|buy now|book (&|and) pay|pay (now|deposit|online)|reserve|place (your )?order|lock in/i.test(b.label));
+  const hasCheckout = allButtons.some(b => CHECKOUT_BUTTON.test(b.label));
   const payment: SummaryItem = paymentConfirmed
     ? { title: "Checkout payment", value: "Paid (test)", note: "Stripe confirmed", tone: "good" }
     : hasCheckout

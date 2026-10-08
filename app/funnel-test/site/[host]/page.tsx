@@ -8,7 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { StageCell } from "@/components/FunnelStageMarks";
 import { FunnelReportView } from "@/components/FunnelReportView";
 import { AlertCircle, ArrowLeft, ChevronDown, ChevronUp, Clock, ExternalLink, Globe, Monitor, Smartphone, X } from "lucide-react";
-import { deriveStages, explainFailure, OWNER_LABEL, STAGES, type ProblemOwner } from "@/utils/funnel-report";
+import { deriveStages, explainFailure, GTM_MISSING, gtmMissing, OWNER_LABEL, STAGES, type ProblemOwner } from "@/utils/funnel-report";
 import { isChooserFunnel } from "@/utils/funnel-discovery";
 
 // Everything about one website's funnel tests on one page: the landing page
@@ -29,6 +29,7 @@ interface DeviceResult {
   site_problem?: string | null;
   results_buttons?: { ok: number; total: number; failed: string[]; payment: string } | null;
   otp_seen?: boolean;
+  gtm_found?: boolean | null;
 }
 
 interface UiResult {
@@ -36,6 +37,8 @@ interface UiResult {
   ui_issues: string[];
   quote_buttons_found: number;
   quote_buttons_working: number;
+  // UK spelling / grammar mistakes in the page text; desktop only, missing on older checks
+  grammar_issues?: { found: string; suggestion: string; reason: string }[] | null;
   error: string | null;
   report_id: string | null;
 }
@@ -226,15 +229,23 @@ export default function SiteReportPage() {
   // The landing page check is saved on whichever funnel ran it most recently
   const uiSource = funnels.filter(f => f.ui_results).sort((a, b) => (b.ui_checked_at ?? "").localeCompare(a.ui_checked_at ?? ""))[0];
   const lastTested = tested.map(f => f.test_finished_at).filter((d): d is string => !!d).sort().pop();
-  const failing = tested.filter(f => f.test_status === "failed" || f.test_status === "error").length;
-  const passing = tested.filter(f => f.test_status === "passed").length;
+  // Working only when every stage on every device worked (incl. Save quote and
+  // Checkout on the thank-you page); a form that went through but has a broken
+  // thank-you page button counts as not working
+  const anyStageFailed = (f: Funnel) =>
+    DEVICES.some(d => {
+      const r = f.test_results?.[d];
+      return !!r && (Object.values(deriveStages(r)).includes("failed") || gtmMissing(r));
+    });
+  const failing = tested.filter(f => f.test_status === "failed" || f.test_status === "error" || (f.test_status === "passed" && anyStageFailed(f))).length;
+  const passing = tested.filter(f => f.test_status === "passed" && !anyStageFailed(f)).length;
 
   const funnelStatus = (f: Funnel) =>
     f.test_enabled === false
       ? { text: "Switched off", cls: "bg-gray-100 text-gray-800 dark:bg-muted dark:text-muted-foreground" }
       : f.test_status === "running"
       ? { text: "Testing now…", cls: "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300" }
-      : f.test_status === "passed"
+      : f.test_status === "passed" && !anyStageFailed(f)
         ? { text: "Working", cls: "bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300" }
         : f.test_status === "failed" || f.test_status === "error"
           ? { text: "Not working", cls: "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300" }
@@ -360,6 +371,53 @@ export default function SiteReportPage() {
                 </tbody>
               </table>
             </div>
+
+            {/* UK spelling & grammar on the landing page (checked on desktop - same words on mobile) */}
+            {(() => {
+              const grammar = uiSource.ui_results?.desktop?.grammar_issues;
+              return (
+                <div className="mt-4">
+                  <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold">
+                    Spelling &amp; grammar (UK)
+                    {Array.isArray(grammar) && (
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                          grammar.length === 0
+                            ? "bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300"
+                            : "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
+                        }`}
+                      >
+                        {grammar.length === 0 ? "No mistakes found" : `${grammar.length} to fix`}
+                      </span>
+                    )}
+                  </h3>
+                  {!Array.isArray(grammar) ? (
+                    <p className="text-sm text-muted-foreground">Not checked yet - it runs with the next test.</p>
+                  ) : grammar.length > 0 ? (
+                    <div className="overflow-x-auto rounded-lg border">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="bg-muted/50">
+                            <th className={th}>Found on the page</th>
+                            <th className={th}>Should be</th>
+                            <th className={th}>Why</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-border">
+                          {grammar.map((g, i) => (
+                            <tr key={i} className="align-top">
+                              <td className="px-4 py-3 text-red-700 dark:text-red-400">&ldquo;{g.found}&rdquo;</td>
+                              <td className="px-4 py-3 text-green-700 dark:text-green-400">&ldquo;{g.suggestion}&rdquo;</td>
+                              <td className="px-4 py-3 text-muted-foreground">{g.reason}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })()}
           </>
         )}
       </section>
@@ -482,6 +540,18 @@ export default function SiteReportPage() {
                                         {buttons.payment && buttons.payment !== "Not recorded" && buttons.payment !== "No checkout" && ` · payment ${buttons.payment.toLowerCase()}`}
                                       </p>
                                     )}
+                                  </div>
+                                )}
+                                {gtmMissing(r) && (
+                                  <div className="mt-2 space-y-1">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <span className="font-medium text-red-700 dark:text-red-400">{GTM_MISSING}</span>
+                                      <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${OWNER_BADGE.website}`}>{OWNER_LABEL.website}</span>
+                                    </div>
+                                    <p className="text-xs text-muted-foreground">
+                                      <span className="font-medium text-foreground">How to fix: </span>
+                                      Add the site&apos;s Google Tag Manager container to the quote form page so leads are tracked.
+                                    </p>
                                   </div>
                                 )}
                               </td>

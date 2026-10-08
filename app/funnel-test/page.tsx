@@ -9,6 +9,8 @@ import {
   deriveProgress,
   deriveStages,
   explainFailure,
+  GTM_MISSING,
+  gtmMissing,
   STAGES,
   type FunnelStages,
   isWaitingForOtp,
@@ -73,6 +75,7 @@ interface Funnel {
     site_problem?: string | null;
     results_buttons?: { ok: number; total: number; failed: string[]; payment: string } | null;
     otp_seen?: boolean;
+    gtm_found?: boolean | null;
   }> | null;
   // UI check: quote buttons + visual problems, no forms submitted
   ui_status: "running" | "ok" | "issues" | "error" | null;
@@ -494,9 +497,9 @@ function DeviceDetail({ result, ui, title, icon: Icon, testing, live, uiRunning,
               <span className="font-medium">{result.steps ?? "—"}</span>
             </div>
             <div className="flex flex-col">
-              <span className="text-muted-foreground">Tracking (GTM / gtag)</span>
-              <span className={`font-medium ${result.tracking_ok === false ? "text-amber-600" : ""}`}>
-                {result.tracking_ok === null ? "—" : result.tracking_ok ? "Present on every step" : "Missing"}
+              <span className="text-muted-foreground">Google Tag Manager</span>
+              <span className={`font-medium ${gtmMissing(result) ? "text-red-600" : ""}`}>
+                {result.gtm_found == null ? "—" : result.gtm_found ? "Found" : "Not found"}
               </span>
             </div>
           </div>
@@ -617,6 +620,24 @@ export default function FunnelTestPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [clientFilter, setClientFilter] = useState("all");
+  // Search and filters survive a refresh (in this browser) until they're cleared.
+  // Restored after the first render so the server and browser render the same page.
+  const [filtersRestored, setFiltersRestored] = useState(false);
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem("funnel-test-filters") ?? "{}");
+      if (typeof saved.search === "string") setSearchQuery(saved.search);
+      if (typeof saved.status === "string") setStatusFilter(saved.status);
+      if (typeof saved.client === "string") setClientFilter(saved.client);
+    } catch {}
+    setFiltersRestored(true);
+  }, []);
+  useEffect(() => {
+    if (!filtersRestored) return;
+    try {
+      localStorage.setItem("funnel-test-filters", JSON.stringify({ search: searchQuery, status: statusFilter, client: clientFilter }));
+    } catch {}
+  }, [filtersRestored, searchQuery, statusFilter, clientFilter]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [showAddForm, setShowAddForm] = useState(false);
   const [form, setForm] = useState({ name: "", url: "", domain_id: NO_CLIENT });
@@ -1512,15 +1533,26 @@ export default function FunnelTestPage() {
   type FunnelState = "running" | "passed" | "failed" | "untested";
   const funnelState = (f: Funnel): FunnelState => {
     if (f.test_status === "running" || f.ui_status === "running") return "running";
-    if (resultView === "both") {
-      return f.test_status === "passed"
-        ? "passed"
-        : f.test_status === "failed" || f.test_status === "error"
-          ? "failed"
-          : "untested";
+    const base: FunnelState =
+      resultView === "both"
+        ? f.test_status === "passed"
+          ? "passed"
+          : f.test_status === "failed" || f.test_status === "error"
+            ? "failed"
+            : "untested"
+        : (() => {
+            const r = deviceResult(f, resultView);
+            return !r ? "untested" : r.status === "passed" ? "passed" : "failed";
+          })();
+    // "Working" only when every stage worked - a submitted form whose thank-you
+    // page buttons (Save quote, Checkout) failed isn't working
+    if (base === "passed") {
+      const stages = funnelStages(f);
+      if (stages && Object.values(stages).includes("failed")) return "failed";
+      // ...nor one whose site has no Google Tag Manager
+      if (viewDevices.some(d => gtmMissing(deviceResult(f, d)))) return "failed";
     }
-    const r = deviceResult(f, resultView);
-    return !r ? "untested" : r.status === "passed" ? "passed" : "failed";
+    return base;
   };
 
   // Form → SMS → Thank-you → Save & Checkout for the devices being shown
@@ -1541,6 +1573,15 @@ export default function FunnelTestPage() {
         if (why) return `${device === "desktop" ? "Desktop" : "Mobile"}: ${why.title}`;
       }
     }
+    // Form went through, but a thank-you page button didn't work
+    for (const device of viewDevices) {
+      const b = deviceResult(f, device)?.results_buttons;
+      if (b && b.total > 0 && b.ok < b.total) {
+        return `${device === "desktop" ? "Desktop" : "Mobile"}: thank-you page button${b.failed.length === 1 ? "" : "s"} not working: ${b.failed.join(", ")}`;
+      }
+    }
+    // Everything worked, but the site has no Google Tag Manager
+    if (viewDevices.some(d => gtmMissing(deviceResult(f, d)))) return GTM_MISSING;
     return null;
   };
 
@@ -1707,11 +1748,8 @@ export default function FunnelTestPage() {
             {state === "running" && <RefreshCw className="h-3 w-3 animate-spin" />}
             {status.text}
           </span>
-          {state === "running" && liveMessage ? (
-            <div className="mt-1.5 max-w-[240px] truncate text-xs text-blue-700 dark:text-blue-300" title={liveMessage}>
-              {liveMessage}
-            </div>
-          ) : reason ? (
+          {/* While testing, the "Testing…" badge alone; the step-by-step log isn't shown here */}
+          {state !== "running" && reason ? (
             <div className="mt-1.5 max-w-[240px] text-xs text-red-700 dark:text-red-400" title={reason}>
               {!single && firstFailing ? `${serviceLabel(firstFailing)}: ` : ""}
               {reason}
@@ -1827,11 +1865,23 @@ export default function FunnelTestPage() {
           <div className="relative w-full sm:w-64">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
+              id="funnel-search"
               placeholder="Search websites…"
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
-              className="h-9 pl-9"
+              className="h-9 pl-9 pr-8"
             />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                title="Clear search"
+                aria-label="Clear search"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
           </div>
           <Select value={statusFilter} onValueChange={setStatusFilter}>
             <SelectTrigger className="h-9 w-full sm:w-44">

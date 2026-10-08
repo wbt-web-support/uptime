@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/utils/supabase/server";
-import { buildSummary, flattenFinalActions, summarizeWalk, type WalkReport } from "@/utils/funnel-report";
+import { buildSummary, CHECKOUT_BUTTON, GTM_MISSING, summarizeWalk, type FinalActionLike, type WalkReport } from "@/utils/funnel-report";
 
 // The funnel-tester backend (funnel-tester/backend) runs as its own always-on server:
 // a walk drives a real browser for minutes, which does not fit a serverless function.
@@ -110,6 +110,9 @@ interface ViewportResult {
   results_buttons?: { ok: number; total: number; failed: string[]; payment: string } | null;
   // The walk reached an SMS-code screen - for the "SMS verified" stage
   otp_seen?: boolean;
+  // Google Tag Manager was found on the quote form (on at least one step - a single
+  // step can miss it while the page is busy); false = the site has no GTM
+  gtm_found?: boolean | null;
 }
 
 // Accepts "desktop", "mobile" or both, as the funnel tester's own dashboard offers
@@ -240,22 +243,31 @@ async function readViewportResult(
       if (report) {
         result.failure = report.failure || null;
         result.site_problem = summarizeWalk(report).siteProblem ?? null;
-        const buttons = flattenFinalActions(report.finalActions);
+        // Only the buttons on the results page itself count - not the steps inside
+        // them (e.g. "Add" / "Next" within checkout). Checkout counts as working
+        // when its test payment went through, whatever happened on the way.
+        const buttons: FinalActionLike[] = Array.isArray(report.finalActions) ? report.finalActions : [];
+        const payment = buildSummary(report).find(s => s.title === "Checkout payment")?.value ?? "No checkout";
+        const worked = (b: FinalActionLike) =>
+          (CHECKOUT_BUTTON.test(b.label) && payment === "Paid (test)") || (!b.error && !b.warning);
         if (buttons.length === 0 && result.status === "passed") {
           // Results page had none of these buttons - nothing to test, not a failure
           result.results_buttons = { ok: 0, total: 0, failed: [], payment: "No checkout" };
         } else if (buttons.length > 0) {
           result.results_buttons = {
-            ok: buttons.filter(b => !b.error && !b.warning).length,
+            ok: buttons.filter(worked).length,
             total: buttons.length,
-            failed: buttons.filter(b => b.error || b.warning).map(b => b.label).slice(0, 6),
-            payment: buildSummary(report).find(s => s.title === "Checkout payment")?.value ?? "No checkout",
+            failed: buttons.filter(b => !worked(b)).map(b => b.label).slice(0, 6),
+            payment,
           };
         }
         result.steps = Array.isArray(report.steps) ? report.steps.length : null;
         // An "_otp" screenshot is taken on every SMS-code screen the walk handled
         result.otp_seen = Array.isArray(report.steps) && report.steps.some((s: any) => /_otp\.png$/.test(s?.screenshot ?? ""));
         result.tracking_ok = !!(report.gtmPresentThroughout || report.gtagPresentThroughout);
+        result.gtm_found = Array.isArray(report.steps) && report.steps.length > 0
+          ? report.steps.some((s: any) => s?.tracking?.gtmPresent === true)
+          : null;
         result.report_id = await saveReport(supabase, funnelId, "test", viewport, result.status, report);
       }
     }
@@ -320,11 +332,14 @@ export async function syncFunnelTest(
     const all = tested.map(v => results[v]!);
     if (all.length === 0) all.push({ status: "error", failure: "No device was tested", steps: null, tracking_ok: null, report_id: null });
 
-    // Overall result: passed only when both devices passed
-    const overall = all.some(r => r.status === "failed") ? "failed" : all.some(r => r.status === "error") ? "error" : "passed";
+    // Overall result: passed only when both devices passed and the site has GTM
+    const gtmMissing = tested.filter(v => results[v]!.gtm_found === false);
+    const walked = all.some(r => r.status === "failed") ? "failed" : all.some(r => r.status === "error") ? "error" : "passed";
+    const overall = walked === "passed" && gtmMissing.length > 0 ? "failed" : walked;
     const failures = tested
       .filter(v => results[v]!.failure)
       .map(v => `${deviceLabel(v)}: ${results[v]!.failure}`);
+    for (const v of gtmMissing) failures.push(`${deviceLabel(v)}: ${GTM_MISSING}`);
 
     update = {
       test_status: overall,
@@ -400,8 +415,17 @@ interface UiViewportResult {
   quote_buttons_working: number;
   // The main call-to-action, only checked when the page has no quote buttons
   cta: { label: string; works: boolean } | null;
+  // UK spelling / grammar mistakes in the page text; checked on desktop only
+  grammar_issues?: GrammarIssue[] | null;
   error: string | null;
   report_id: string | null;
+}
+
+// One UK English mistake found on a page
+export interface GrammarIssue {
+  found: string;
+  suggestion: string;
+  reason: string;
 }
 
 // The UI check looks at the site's homepage, where visitors meet the quote buttons.
@@ -457,11 +481,15 @@ async function readUiResult(
   const problems = uiIssues.length + (quoteButtons.length - working) + (cta && !cta.works ? 1 : 0);
   const status = problems === 0 ? "ok" : "issues";
 
+  // UK spelling / grammar mistakes in the page's text (desktop only, null on mobile)
+  const grammarIssues: GrammarIssue[] | null = Array.isArray(run.grammarIssues) ? run.grammarIssues : null;
+
   const report = {
     screenshot: run.screenshot ?? null,
     uiIssues,
     quoteButtons,
     ctaCheck: run.ctaCheck ?? null,
+    grammarIssues,
     messages: run.messages ?? [],
   };
 
@@ -471,6 +499,7 @@ async function readUiResult(
     quote_buttons_found: quoteButtons.length,
     quote_buttons_working: working,
     cta,
+    grammar_issues: grammarIssues,
     error: null,
     report_id: await saveReport(supabase, funnelId, "ui", viewport, status, report),
   };
