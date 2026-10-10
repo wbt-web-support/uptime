@@ -22,7 +22,8 @@ import { isChooserFunnel } from "@/utils/funnel-discovery";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const TESTS_PER_HOUR = Number(process.env.FUNNEL_TESTS_PER_HOUR || 10);
+// Kept low so the test phone numbers get few SMS codes in a short time (Twilio blocks them otherwise)
+const TESTS_PER_HOUR = Number(process.env.FUNNEL_TESTS_PER_HOUR || 2);
 const RETEST_DAYS = Number(process.env.FUNNEL_RETEST_DAYS || 7);
 // Down pages are skipped without a walk; cap how many we probe in one run
 const MAX_PROBES_PER_RUN = 10;

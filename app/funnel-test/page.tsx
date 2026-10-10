@@ -133,7 +133,15 @@ function formatDuration(ms: number) {
 
 // Same as the server's FUNNEL_RETEST_COOLDOWN_MINUTES default: how long a funnel
 // waits between tests so the test phone numbers aren't asked for codes too often
-const RETEST_COOLDOWN_MIN = 60;
+// (Twilio blocks numbers that get codes again and again)
+const RETEST_COOLDOWN_MIN = 24 * 60;
+
+// "45 min", "3h 20m", "24 hours"
+function minutesText(min: number) {
+  if (min < 60) return `${min} min`;
+  if (min % 60 === 0) return `${min / 60} hour${min === 60 ? "" : "s"}`;
+  return `${Math.floor(min / 60)}h ${String(min % 60).padStart(2, "0")}m`;
+}
 
 // Minutes until a funnel can be tested again (0 = now). Stopped or crashed tests
 // ("error") don't count, the same as on the server.
@@ -557,14 +565,6 @@ function DeviceDetail({ result, ui, title, icon: Icon, testing, live, uiRunning,
                 </span>
               </div>
             )}
-            {ui.ui_issues.length > 0 ? (
-              <ul className="list-disc space-y-0.5 pl-4 text-amber-700 dark:text-amber-400">
-                {ui.ui_issues.slice(0, 3).map((issue, i) => <li key={i}>{issue}</li>)}
-                {ui.ui_issues.length > 3 && <li>and {ui.ui_issues.length - 3} more</li>}
-              </ul>
-            ) : (
-              <div className="text-green-600 dark:text-green-400">No visual problems found</div>
-            )}
           </div>
         )}
       </div>
@@ -589,10 +589,12 @@ function UiPill({ funnel }: { funnel: Funnel }) {
   }
   const results = funnel.ui_results ? Object.values(funnel.ui_results) : [];
   const problems = results.reduce(
-    (n, r) => n + r.ui_issues.length + (r.quote_buttons_found - r.quote_buttons_working) + (r.cta && !r.cta.works ? 1 : 0),
+    // Design remarks aren't counted - only quote buttons that don't work
+    (n, r) => n + (r.quote_buttons_found - r.quote_buttons_working) + (r.cta && !r.cta.works ? 1 : 0),
     0
   );
-  const ok = funnel.ui_status === "ok";
+  // Older checks were marked "issues" for design remarks alone - those are OK now
+  const ok = funnel.ui_status === "ok" || (funnel.ui_status === "issues" && problems === 0);
   return (
     <span
       className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${
@@ -715,7 +717,7 @@ export default function FunnelTestPage() {
 
   // SMS verification codes each test number has received today, against its daily limit
   // blockedAt: Twilio refused to send verification codes to this number (its
-  // anti-fraud block); these blocks lift by themselves, usually within a day
+  // anti-fraud block); Twilio lifts these within 12 hours, and the tester tries the number again after that
   const [smsUsage, setSmsUsage] = useState<{ limit: number; numbers: { number: string; used: number; blockedAt?: string | null }[] } | null>(null);
 
   // One warning per test number that is blocked, used up or nearly used up today
@@ -727,7 +729,7 @@ export default function FunnelTestPage() {
       if (n.blockedAt) {
         out.push({
           level: "red",
-          text: `${n.number} is temporarily blocked by Twilio from receiving verification codes (since ${new Date(n.blockedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}). Too many codes reached it in a short time; the block usually lifts within a day. Tests use the other number meanwhile.`,
+          text: `${n.number} is temporarily blocked by Twilio from receiving verification codes (since ${new Date(n.blockedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}). Twilio blocks lift within 12 hours; the number is tried again at ${new Date(new Date(n.blockedAt).getTime() + 12 * 3600_000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}. Tests use the other number meanwhile.`,
         });
       } else if (n.used >= smsUsage.limit) {
         out.push({ level: "red", text: `${n.number} has used all ${smsUsage.limit} of today's SMS codes. Tests use the other number until tomorrow.` });
@@ -736,7 +738,7 @@ export default function FunnelTestPage() {
       }
     }
     if (smsUsage.numbers.length > 0 && usable.length === 0) {
-      out.unshift({ level: "red", text: "No test number can receive SMS codes right now. Funnels with an SMS step will fail until a number is free again (tomorrow at the latest)." });
+      out.unshift({ level: "red", text: "No test number can receive SMS codes right now. Tests are paused until a number is free again, so the block isn’t made longer." });
     }
     return out;
   })();
@@ -1050,6 +1052,9 @@ export default function FunnelTestPage() {
         setTestMessages(prev => ({ ...prev, [funnel.id]: "Starting..." }));
       } catch (err: any) {
         setError(err.message);
+        // No test number can get SMS codes now (Twilio block / daily limit): end a
+        // Test all here instead of trying every remaining funnel and failing each
+        if (/test phone number/i.test(err.message ?? "")) stopTestAllRef.current = true;
         return null;
       }
     }
@@ -1059,7 +1064,7 @@ export default function FunnelTestPage() {
   // Stop a running test and its UI check; the polling loops see the stopped status and end
   const [stoppingIds, setStoppingIds] = useState<Set<string>>(new Set());
   const stopTest = async (funnel: { id: string; name: string }, ask = true) => {
-    if (ask && !window.confirm(`Stop the test on "${funnel.name}"?\n\nThe walker stops after the step it's on. Anything it has already submitted stays submitted.`)) return;
+    if (ask && !window.confirm(`Stop the test on "${funnel.name}"?\n\nThe walker stops after the step it's on. Anything it has already submitted stays submitted. If an SMS code is on its way, it enters that code first, so the code isn't wasted (wasted codes get the test numbers blocked by Twilio).`)) return;
     stoppedIdsRef.current.add(funnel.id);
     setStoppingIds(prev => new Set(prev).add(funnel.id));
     try {
@@ -1107,7 +1112,7 @@ export default function FunnelTestPage() {
     const left = cooldownLeft(funnel);
     const ago = funnel.test_finished_at ? formatTimeAgo(funnel.test_finished_at).toLowerCase() : "";
     const ask = left > 0
-      ? `"${funnel.name}" was tested ${ago}. To protect the test phone numbers, tests normally wait ${RETEST_COOLDOWN_MIN} minutes (${left} min left).\n\nTest it again anyway?\n\n${REAL_LEAD_WARNING}`
+      ? `"${funnel.name}" was tested ${ago}. To protect the test phone numbers from being blocked by Twilio, tests normally wait ${minutesText(RETEST_COOLDOWN_MIN)} (${minutesText(left)} left).\n\nTest it again anyway?\n\n${REAL_LEAD_WARNING}`
       : `Test "${funnel.name}"?\n\n${REAL_LEAD_WARNING}`;
     if (!window.confirm(ask + smsWarningText)) return;
     setError("");
@@ -1134,7 +1139,7 @@ export default function FunnelTestPage() {
     let includeRecent = false;
     if (recent.length > 0 && askAboutRecent) {
       includeRecent = window.confirm(
-        `${recent.length} of these ${recent.length === 1 ? "was" : "were"} tested in the last ${RETEST_COOLDOWN_MIN} minutes (${recent.map(f => f.name).join(", ")}).\n\nOK = test ${recent.length === 1 ? "it" : "them"} again too\nCancel = skip ${recent.length === 1 ? "it" : "them"}`
+        `${recent.length} of these ${recent.length === 1 ? "was" : "were"} tested in the last ${minutesText(RETEST_COOLDOWN_MIN)} (${recent.map(f => f.name).join(", ")}).\n\nOK = test ${recent.length === 1 ? "it" : "them"} again too\nCancel = skip ${recent.length === 1 ? "it" : "them"}`
       );
     }
 
@@ -1171,7 +1176,7 @@ export default function FunnelTestPage() {
     bulkCurrentRef.current = null;
     setTestAllProgress(null);
     const stopped = done < list.length ? ` (stopped after ${done} of ${list.length})` : "";
-    const skippedNote = skipped ? ` · ${skipped} skipped (tested in the last ${RETEST_COOLDOWN_MIN} min)` : "";
+    const skippedNote = skipped ? ` · ${skipped} skipped (tested in the last ${minutesText(RETEST_COOLDOWN_MIN)})` : "";
     setSuccess(`Funnel tests finished: ${passed} of ${done - skipped} passed${stopped}${skippedNote} · took ${formatDuration(Date.now() - startedAt)}`);
   };
 

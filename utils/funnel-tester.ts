@@ -9,7 +9,8 @@ export const FUNNEL_TESTER_URL = (process.env.FUNNEL_TESTER_URL || "http://local
 // Must match FUNNEL_TESTER_API_KEY on the backend once it is set there
 const FUNNEL_TESTER_API_KEY = process.env.FUNNEL_TESTER_API_KEY;
 // Minimum gap before the same funnel can be tested again after a finished test
-const RETEST_COOLDOWN_MINUTES = Number(process.env.FUNNEL_RETEST_COOLDOWN_MINUTES || 60);
+// A day: Twilio blocks test numbers that are sent codes again and again
+const RETEST_COOLDOWN_MINUTES = Number(process.env.FUNNEL_RETEST_COOLDOWN_MINUTES || 24 * 60);
 
 // Same rule as the /api/check routes: signed in and listed in ADMIN_EMAIL.
 // Returns the Supabase client, or the error response to send back.
@@ -147,6 +148,9 @@ async function testEntry(supabase: SupabaseClient, funnel: { url: string; domain
   return { startUrl: homepage, entryHint: funnel.url };
 }
 
+const hoursOrMinutes = (min: number) =>
+  min < 60 ? `${min} minute${min === 1 ? "" : "s"}` : `${Math.round(min / 60)} hour${Math.round(min / 60) === 1 ? "" : "s"}`;
+
 export async function startFunnelTest(
   supabase: SupabaseClient,
   funnel: { id: string; name: string; url: string; domain_id?: string | null },
@@ -177,7 +181,7 @@ export async function startFunnelTest(
     if (Date.now() < readyAt) {
       const mins = Math.ceil((readyAt - Date.now()) / 60_000);
       throw new Error(
-        `This funnel was tested less than ${RETEST_COOLDOWN_MINUTES} minutes ago. To protect the test phone numbers from being blocked, it can be tested again in ${mins} minute${mins === 1 ? "" : "s"}.`
+        `This funnel was tested less than ${hoursOrMinutes(RETEST_COOLDOWN_MINUTES)} ago. To protect the test phone numbers from being blocked, it can be tested again in ${hoursOrMinutes(mins)}.`
       );
     }
   }
@@ -426,6 +430,9 @@ export interface GrammarIssue {
   found: string;
   suggestion: string;
   reason: string;
+  // Marked on the website report once corrected on the site; a later check that
+  // still finds the mistake brings it back as "to fix"
+  status?: "fix" | "fixed";
 }
 
 // The UI check looks at the site's homepage, where visitors meet the quote buttons.
@@ -478,7 +485,9 @@ async function readUiResult(
   const uiIssues: string[] = run.uiIssues || [];
   const cta = run.ctaCheck ? { label: run.ctaCheck.label, works: !!run.ctaCheck.changed } : null;
   const working = quoteButtons.filter(b => b.works).length;
-  const problems = uiIssues.length + (quoteButtons.length - working) + (cta && !cta.works ? 1 : 0);
+  // Design remarks ("button blends into the background") are opinions, not errors -
+  // only quote buttons that don't work count as problems
+  const problems = (quoteButtons.length - working) + (cta && !cta.works ? 1 : 0);
   const status = problems === 0 ? "ok" : "issues";
 
   // UK spelling / grammar mistakes in the page's text (desktop only, null on mobile)

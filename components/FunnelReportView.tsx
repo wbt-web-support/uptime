@@ -172,7 +172,6 @@ function TestReport({ report }: { report: WalkReport }) {
   const steps = report.steps || [];
   const parsedFailure = !report.completed ? parseFailure(report.failure) : null;
   const trackingGap = (!report.gtmPresentThroughout || !report.gtagPresentThroughout) && steps.length > 0;
-  const stepsWithUiIssues = steps.filter(s => (s.uiIssues?.length ?? 0) > 0);
   const limitation = !report.completed ? detectKnownLimitation(report.failure, steps) : null;
   const siteProblem = !report.completed ? detectSiteRequestProblem(report) : null;
   const explanation = !report.completed
@@ -255,12 +254,6 @@ function TestReport({ report }: { report: WalkReport }) {
         </Notice>
       )}
 
-      {stepsWithUiIssues.length > 0 && (
-        <Notice tone="violet" title={`UI issues flagged on ${stepsWithUiIssues.length} step(s)`}>
-          <p>See each step below ({report.viewport === "mobile" ? "mobile" : "desktop"} view) for what looked wrong.</p>
-        </Notice>
-      )}
-
       <Collapsible title="Console errors" items={report.consoleErrors} />
       <Collapsible title="Page errors" items={report.pageErrors} />
       <Collapsible title="API calls (XHR/fetch)" items={report.apiCalls} />
@@ -301,11 +294,6 @@ function TestReport({ report }: { report: WalkReport }) {
                   {step.actionWarnings.map((w, i) => <li key={i}>⚠ {w}</li>)}
                 </ul>
               )}
-              {step.uiIssues?.length > 0 && (
-                <ul className="space-y-1 text-xs text-violet-600 dark:text-violet-400">
-                  {step.uiIssues.map((u, i) => <li key={i}>🎨 {u}</li>)}
-                </ul>
-              )}
             </div>
           </div>
         </div>
@@ -323,22 +311,11 @@ function TestReport({ report }: { report: WalkReport }) {
 
 function UiReport({ report }: { report: any }) {
   const buttons: any[] = report.quoteButtons || [];
-  const issues: string[] = report.uiIssues || [];
   return (
     <div className="space-y-4">
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <Screenshot path={report.screenshot} alt="Page" className="max-h-[520px] w-full" />
         <div className="space-y-4">
-          <div className="rounded-lg border bg-background p-4">
-            <div className="mb-2 text-sm font-medium">Visual problems</div>
-            {issues.length === 0 ? (
-              <p className="text-sm text-green-600 dark:text-green-400">None found.</p>
-            ) : (
-              <ul className="list-disc space-y-1 pl-4 text-sm">
-                {issues.map((u, i) => <li key={i}>{u}</li>)}
-              </ul>
-            )}
-          </div>
           {report.ctaCheck && (
             <div className="rounded-lg border bg-background p-4 text-sm">
               <div className="mb-2 font-medium">Main call-to-action</div>

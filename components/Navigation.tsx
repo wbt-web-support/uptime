@@ -7,6 +7,7 @@ import { Menu, X, ChevronsUp, Shield, Home, User, Bell, Gauge, Zap, Filter } fro
 import { createClient } from "@/utils/supabase/client";
 import { cn } from "@/lib/utils";
 import { signOutAction } from "@/app/actions";
+import { ThemeSwitcher } from "@/components/theme-switcher";
 
 export default function Navigation() {
   const [isOpen, setIsOpen] = useState(false);
@@ -98,6 +99,8 @@ export default function Navigation() {
               );
             })}
 
+            <ThemeSwitcher />
+
             {user ? (
               <div className="flex items-center space-x-2">
                 <form action={signOutAction}>
@@ -117,7 +120,8 @@ export default function Navigation() {
           </nav>
 
           {/* Mobile menu button */}
-          <div className="md:hidden">
+          <div className="md:hidden flex items-center gap-1">
+            <ThemeSwitcher />
             <button
               onClick={() => setIsOpen(!isOpen)}
               className="inline-flex items-center justify-center p-2 rounded-md text-foreground hover:text-brand hover:bg-secondary transition-colors"

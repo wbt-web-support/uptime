@@ -631,18 +631,12 @@ export function buildSummary(report: WalkReport): SummaryItem[] {
       ? { title: "Checkout payment", value: "Not paid", note: "Checkout opened, no payment", tone: "warn" }
       : { title: "Checkout payment", value: "No checkout", note: "Nothing to pay", tone: "neutral" };
 
-  const uiSteps = steps.filter(s => (s.uiIssues?.length ?? 0) > 0).length;
-  const looks: SummaryItem = !recorded
-    ? { title: "Looks", value: "Not checked", note: "No screenshots", tone: "neutral" }
-    : uiSteps === 0
-      ? { title: "Looks", value: "No issues", note: "Every step looked fine", tone: "good" }
-      : { title: "Looks", value: `${uiSteps} step(s)`, note: "Visual issues flagged", tone: "warn" };
-
   const form: SummaryItem = report.completed
     ? { title: "Form", value: "Submitted", note: `${steps.length} steps`, tone: "good" }
     : { title: "Form", value: "Not finished", note: recorded ? `Stopped at step ${steps.length}` : "Did not start", tone: "bad" };
 
-  return [form, otp, tracking, buttons, payment, looks];
+  // No "Looks" item: design remarks aren't errors, so they aren't shown
+  return [form, otp, tracking, buttons, payment];
 }
 
 export const TONE_CLASS: Record<Tone, { card: string; value: string; dot: string }> = {

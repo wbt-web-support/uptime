@@ -106,7 +106,6 @@ export default function FunnelIssuesPage() {
   const passed = tabRuns?.filter(r => r.summary.category === "Passed").length ?? 0;
   const knownLimitations = tabRuns?.filter(r => !r.summary.completed && r.summary.knownLimitation).length ?? 0;
   const actionable = total - passed - knownLimitations;
-  const uiIssues = tabRuns?.reduce((n, r) => n + r.summary.uiIssueCount, 0) ?? 0;
 
   const counts = new Map<FailureCategory, number>();
   tabRuns?.forEach(r => counts.set(r.summary.category, (counts.get(r.summary.category) ?? 0) + 1));
@@ -158,7 +157,6 @@ export default function FunnelIssuesPage() {
             <StatTile label="Passed" value={passed} className="text-green-600 dark:text-green-400" />
             <StatTile label="Actionable failures" value={actionable} className="text-red-600 dark:text-red-400" />
             <StatTile label="Known limitations" value={knownLimitations} className="text-sky-600 dark:text-sky-400" />
-            <StatTile label="UI issues found" value={uiIssues} className="text-violet-600 dark:text-violet-400" />
           </div>
 
           {failureCategories.length > 0 && (
@@ -206,7 +204,6 @@ export default function FunnelIssuesPage() {
                           {run.viewport === "mobile" ? <Smartphone className="h-3 w-3" /> : <Monitor className="h-3 w-3" />}
                           {run.viewport}
                         </span>
-                        {run.summary.uiIssueCount > 0 && <span>· 🎨 {run.summary.uiIssueCount} UI issue(s)</span>}
                         {!run.summary.trackingOk && <span>· ⚠️ tracking gap</span>}
                       </div>
                       {isLimitation ? (

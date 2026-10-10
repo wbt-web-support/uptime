@@ -38,7 +38,7 @@ interface UiResult {
   quote_buttons_found: number;
   quote_buttons_working: number;
   // UK spelling / grammar mistakes in the page text; desktop only, missing on older checks
-  grammar_issues?: { found: string; suggestion: string; reason: string }[] | null;
+  grammar_issues?: { found: string; suggestion: string; reason: string; status?: "fix" | "fixed" }[] | null;
   error: string | null;
   report_id: string | null;
 }
@@ -162,6 +162,24 @@ export default function SiteReportPage() {
           ? "Couldn't save: the database needs one new column first. Run migrations/add_funnel_test_enabled.sql in Supabase's SQL Editor, then try again."
           : `Couldn't save: ${updateError.message}`
       );
+    }
+  };
+
+  // Mark one spelling/grammar mistake as fixed (or back to "to fix"); saved on the
+  // funnel whose landing page check it came from
+  const setGrammarStatus = async (f: Funnel, index: number, status: "fix" | "fixed") => {
+    setSaveError("");
+    const issues = f.ui_results?.desktop?.grammar_issues;
+    if (!f.ui_results?.desktop || !Array.isArray(issues)) return;
+    const uiResults = {
+      ...f.ui_results,
+      desktop: { ...f.ui_results.desktop, grammar_issues: issues.map((g, i) => (i === index ? { ...g, status } : g)) },
+    };
+    setFunnels(prev => prev?.map(x => (x.id === f.id ? { ...x, ui_results: uiResults } : x)) ?? prev);
+    const { error: updateError } = await supabase.from("funnels").update({ ui_results: uiResults }).eq("id", f.id);
+    if (updateError) {
+      setFunnels(prev => prev?.map(x => (x.id === f.id ? { ...x, ui_results: f.ui_results } : x)) ?? prev);
+      setSaveError(`Couldn't save: ${updateError.message}`);
     }
   };
 
@@ -315,7 +333,6 @@ export default function SiteReportPage() {
                   <tr className="bg-muted/50">
                     <th className={th}>Device</th>
                     <th className={th}>&quot;Get a quote&quot; buttons</th>
-                    <th className={th}>Design issues</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
@@ -349,22 +366,6 @@ export default function SiteReportPage() {
                             </span>
                           )}
                         </td>
-                        <td className="px-4 py-4">
-                          {!ui || ui.error ? (
-                            <span className="text-muted-foreground">—</span>
-                          ) : ui.ui_issues.length === 0 ? (
-                            <span className="text-muted-foreground">None</span>
-                          ) : (
-                            <details>
-                              <summary className="cursor-pointer text-amber-700 dark:text-amber-400">
-                                {ui.ui_issues.length} issue{ui.ui_issues.length === 1 ? "" : "s"} - show
-                              </summary>
-                              <ul className="mt-2 max-w-xl list-disc space-y-1 pl-5 text-xs text-muted-foreground">
-                                {ui.ui_issues.map((issue, i) => <li key={i}>{issue}</li>)}
-                              </ul>
-                            </details>
-                          )}
-                        </td>
                       </tr>
                     );
                   })}
@@ -375,6 +376,7 @@ export default function SiteReportPage() {
             {/* UK spelling & grammar on the landing page (checked on desktop - same words on mobile) */}
             {(() => {
               const grammar = uiSource.ui_results?.desktop?.grammar_issues;
+              const toFix = Array.isArray(grammar) ? grammar.filter(g => g.status !== "fixed").length : 0;
               return (
                 <div className="mt-4">
                   <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold">
@@ -382,12 +384,12 @@ export default function SiteReportPage() {
                     {Array.isArray(grammar) && (
                       <span
                         className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                          grammar.length === 0
+                          toFix === 0
                             ? "bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300"
                             : "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
                         }`}
                       >
-                        {grammar.length === 0 ? "No mistakes found" : `${grammar.length} to fix`}
+                        {grammar.length === 0 ? "No mistakes found" : toFix === 0 ? "All fixed" : `${toFix} to fix`}
                       </span>
                     )}
                   </h3>
@@ -401,16 +403,33 @@ export default function SiteReportPage() {
                             <th className={th}>Found on the page</th>
                             <th className={th}>Should be</th>
                             <th className={th}>Why</th>
+                            <th className={th}>Status</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-border">
-                          {grammar.map((g, i) => (
-                            <tr key={i} className="align-top">
-                              <td className="px-4 py-3 text-red-700 dark:text-red-400">&ldquo;{g.found}&rdquo;</td>
-                              <td className="px-4 py-3 text-green-700 dark:text-green-400">&ldquo;{g.suggestion}&rdquo;</td>
-                              <td className="px-4 py-3 text-muted-foreground">{g.reason}</td>
-                            </tr>
-                          ))}
+                          {grammar.map((g, i) => {
+                            const fixed = g.status === "fixed";
+                            return (
+                              <tr key={i} className={`align-top ${fixed ? "opacity-60" : ""}`}>
+                                <td className={`px-4 py-3 ${fixed ? "text-muted-foreground line-through" : "text-red-700 dark:text-red-400"}`}>&ldquo;{g.found}&rdquo;</td>
+                                <td className="px-4 py-3 text-green-700 dark:text-green-400">&ldquo;{g.suggestion}&rdquo;</td>
+                                <td className="px-4 py-3 text-muted-foreground">{g.reason}</td>
+                                <td className="px-4 py-3">
+                                  <select
+                                    value={fixed ? "fixed" : "fix"}
+                                    onChange={e => setGrammarStatus(uiSource, i, e.target.value as "fix" | "fixed")}
+                                    aria-label={`Status of "${g.found}"`}
+                                    className={`rounded-md border bg-background px-2 py-1 text-xs font-medium ${
+                                      fixed ? "text-green-700 dark:text-green-400" : "text-amber-700 dark:text-amber-400"
+                                    }`}
+                                  >
+                                    <option value="fix">To fix</option>
+                                    <option value="fixed">Fixed</option>
+                                  </select>
+                                </td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
