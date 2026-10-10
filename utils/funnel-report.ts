@@ -271,6 +271,12 @@ export function describeSiteRequestProblem(p: SiteRequestProblem): string {
       : "";
     return `The website's own server hit an error handling its request to ${p.path} ${times}${said}.${sql} This is a problem on the site itself, so real visitors are likely hitting it too.`;
   }
+  // WordPress answers "-1" (or "0") with 403 when a form's security token (nonce)
+  // is out of date - nearly always because the page is served from a cache. Seen
+  // on a quote form's postcode lookup: every search refused, no addresses ever came up.
+  if (/admin-ajax\.php$/i.test(p.path) && (p.status === 403 || p.status === 400) && /^-?[01]?$/.test((p.message ?? "").trim())) {
+    return `The website's form refused its own request to ${p.path} ${times} (error ${p.status}, "${(p.message ?? "").trim() || "empty"}"): WordPress's security check failed because the page's security token is out of date - nearly always because the quote page is being cached. Real visitors hit this too (e.g. the postcode search finds no addresses). Fix: exclude the quote page from page caching (WP Rocket, LiteSpeed, Cloudflare, the host's cache) or have the form fetch a fresh token.`;
+  }
   return `The website's own server rejected its request to ${p.path} ${times} with error ${p.status}${said}. This is a problem on the site itself, so real visitors are likely hitting it too.`;
 }
 

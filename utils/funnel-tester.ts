@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/utils/supabase/server";
-import { buildSummary, CHECKOUT_BUTTON, GTM_MISSING, summarizeWalk, type FinalActionLike, type WalkReport } from "@/utils/funnel-report";
+import { sendFunnelAlert } from "@/utils/notifications";
+import { buildSummary, CHECKOUT_BUTTON, deriveStages, explainFailure, GTM_MISSING, summarizeWalk, type FinalActionLike, type WalkReport } from "@/utils/funnel-report";
 
 // The funnel-tester backend (funnel-tester/backend) runs as its own always-on server:
 // a walk drives a real browser for minutes, which does not fit a serverless function.
@@ -364,7 +365,116 @@ export async function syncFunnelTest(
     .single();
   if (error) throw error;
 
+  if (update.test_results) await saveHistory(supabase, updated).catch(err => console.error("[funnel-tester] could not save history:", err));
   return { funnel: updated };
+}
+
+// ---------------------------------------------------------------------------
+// Test history: one small row per finished test (kind "history", ~1 KB), kept for
+// the last HISTORY_KEPT tests - full reports are too big to keep more than 2 of,
+// but this is enough to see when a funnel broke and how often it fails
+// ---------------------------------------------------------------------------
+const HISTORY_KEPT = 30;
+
+export interface HistoryEntry {
+  started_at: string | null;
+  finished_at: string;
+  // working = every stage on every device passed and GTM was found
+  result: "working" | "not_working" | "error";
+  // Why it didn't work, in a few words (first device that failed)
+  reason: string | null;
+  devices: Partial<Record<Viewport, { stages: Record<string, string>; buttons: string | null; gtm: boolean | null }>>;
+}
+
+async function saveHistory(supabase: SupabaseClient, funnel: any) {
+  const results: Partial<Record<Viewport, ViewportResult>> = funnel.test_results ?? {};
+  // A test is saved once, even if two polls finish it at the same moment
+  const { data: existing } = await supabase
+    .from("funnel_reports")
+    .select("id")
+    .eq("funnel_id", funnel.id)
+    .eq("kind", "history")
+    .eq("report->>started_at", funnel.test_started_at ?? "")
+    .limit(1);
+  if (existing?.length) return;
+
+  const devices: HistoryEntry["devices"] = {};
+  let reason: string | null = null;
+  let anyFailed = false;
+  for (const v of VIEWPORTS) {
+    const r = results[v];
+    if (!r) continue;
+    const stages = deriveStages(r);
+    const failed = r.status !== "passed" || Object.values(stages).includes("failed") || r.gtm_found === false;
+    if (failed && !reason) {
+      const b = r.results_buttons;
+      reason =
+        r.status !== "passed"
+          ? explainFailure(r.failure, r.site_problem)?.title ?? r.failure ?? "Failed"
+          : b && b.ok < b.total
+            ? `Thank-you page button not working: ${b.failed.join(", ")}`
+            : r.gtm_found === false
+              ? GTM_MISSING
+              : "A stage failed";
+      reason = `${deviceLabel(v)}: ${reason}`;
+    }
+    anyFailed ||= failed;
+    devices[v] = {
+      stages: { form: stages.form, otp: stages.otp, results: stages.results },
+      buttons: r.results_buttons ? `${r.results_buttons.ok}/${r.results_buttons.total}` : null,
+      gtm: r.gtm_found ?? null,
+    };
+  }
+  const entry: HistoryEntry = {
+    started_at: funnel.test_started_at ?? null,
+    finished_at: funnel.test_finished_at,
+    result: funnel.test_status === "error" ? "error" : anyFailed ? "not_working" : "working",
+    reason,
+    devices,
+  };
+  // The previous finished test (stopped / crashed ones don't count) - to tell
+  // whether this one broke or fixed the funnel
+  const { data: previousRows } = await supabase
+    .from("funnel_reports")
+    .select("report")
+    .eq("funnel_id", funnel.id)
+    .eq("kind", "history")
+    .neq("status", "error")
+    .order("created_at", { ascending: false })
+    .limit(1);
+  const previous = (previousRows?.[0]?.report as HistoryEntry | undefined) ?? null;
+
+  await supabase
+    .from("funnel_reports")
+    .insert({ funnel_id: funnel.id, kind: "history", viewport: "both", status: entry.result, report: entry });
+
+  // Email the team when a funnel breaks (it worked last time, or it's the first
+  // test) and when it works again - not again for every test while it stays broken
+  const alert =
+    entry.result === "not_working" && (!previous || previous.result === "working")
+      ? "broken"
+      : entry.result === "working" && previous?.result === "not_working"
+        ? "fixed"
+        : null;
+  if (alert) {
+    const base = (process.env.NEXT_PUBLIC_SITE_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000")).replace(/\/$/, "");
+    await sendFunnelAlert({
+      kind: alert,
+      funnelName: funnel.name,
+      funnelUrl: funnel.url,
+      reason: entry.reason,
+      reportUrl: `${base}/funnel-test/site/${new URL(funnel.url).hostname.replace(/^www\./, "")}`,
+    });
+  }
+
+  const { data: older } = await supabase
+    .from("funnel_reports")
+    .select("id")
+    .eq("funnel_id", funnel.id)
+    .eq("kind", "history")
+    .order("created_at", { ascending: false })
+    .range(HISTORY_KEPT, HISTORY_KEPT + 100);
+  if (older?.length) await supabase.from("funnel_reports").delete().in("id", older.map(r => r.id));
 }
 
 // Ask the backend to stop a running test and its UI check, then mark them stopped.
@@ -421,6 +531,9 @@ interface UiViewportResult {
   cta: { label: string; works: boolean } | null;
   // UK spelling / grammar mistakes in the page text; checked on desktop only
   grammar_issues?: GrammarIssue[] | null;
+  // The page whose quote buttons were checked: the homepage, or - when it has none -
+  // the funnel's service page (e.g. /battery-storage/)
+  landing_url?: string | null;
   error: string | null;
   report_id: string | null;
 }
@@ -442,11 +555,12 @@ export async function startUiCheck(
   supabase: SupabaseClient,
   funnel: { id: string; name: string; url: string; domain_id?: string | null }
 ) {
-  const { startUrl } = await testEntry(supabase, funnel);
+  // entryHint: the funnel, so its service page is checked when the homepage has no quote buttons
+  const { startUrl, entryHint } = await testEntry(supabase, funnel);
   const res = await funnelTesterFetch("/check-ui-batch", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ items: [{ url: startUrl, name: funnel.name }] }),
+    body: JSON.stringify({ items: [{ url: startUrl, name: funnel.name, entryHint }] }),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok || !data.batchId) {
@@ -509,6 +623,7 @@ async function readUiResult(
     quote_buttons_working: working,
     cta,
     grammar_issues: grammarIssues,
+    landing_url: run.landingUrl ?? null,
     error: null,
     report_id: await saveReport(supabase, funnelId, "ui", viewport, status, report),
   };

@@ -194,6 +194,15 @@ export interface WalkResult {
   otpOutcomes?: Record<string, "received" | "missing">;
 }
 
+// Which answer to pick on a multiple-choice question, chosen at random for every
+// step - so each test goes down a different path through the form instead of
+// always picking the first answer. Answers that would end the quote are skipped.
+function randomAnswerNote(): string {
+  const position = 1 + Math.floor(Math.random() * 4);
+  const nth = ["1st", "2nd", "3rd", "4th"][position - 1];
+  return `ANSWER CHOICE for this step: on each multiple-choice question (option cards, radio buttons, single-select dropdowns), pick the ${nth} option counting from the first one shown - if there are fewer options, pick the last one. Skip any option that would end the quote or isn't a real answer (e.g. "I'm not the homeowner", "I rent", "Just looking", "Not sure", "None of these", "Other", a "No" that stops the quote) and take the next option instead. For "choose all that apply", select just that one option, then click the forward button. This doesn't apply to text boxes, postcodes, addresses, dates or the contact details.`;
+}
+
 async function askModelForNextActions(
   framesHtml: string,
   failedAttempts: PlannedAction[][],
@@ -231,7 +240,7 @@ Rules:
 - On a manual address step (separate boxes such as house number/name, address line 1/street, address line 2, town/city, county, postcode), fill EVERY box that is empty and required (marked * or "required") in one go, using this test address: house number "10", street/address line 1 "Downing Street", town/city "London", county "Greater London" - and leave a postcode that's already filled as it is. Filling only the house number leaves the street line empty and the step won't continue. Before clicking Continue again after a step didn't move on, read the whole page's HTML for a validation message (it may be above the visible area) and fill exactly the box it names.
 - When picking an address from a list (a dropdown, or clickable address rows/cards), choose one whose text contains NO apostrophe or other special punctuation - e.g. prefer "10 Downing Street, London" over "King's Road, ..." or "St. John's Wood". Several sites' quote forms crash when the saved address contains an apostrophe; that bug is reported separately, and the funnel test itself should get through. Only if every address has one, pick any.
 - Only include a final "click" on a button that moves FORWARD (e.g. "Next", "Continue", "Get My Quote", "Submit") - never click "Back"/"Previous". Many single-choice steps have no forward button at all because selecting the option auto-advances; if the only other button visible is "Back", do NOT click it - just select the option and stop there.
-- Answer each question ONCE: pick one sensible option (the first reasonable one is fine) and move on. Many funnels ask several similar questions in a row on the same page (e.g. "Ground floor rooms?" then "External doors?", or one Yes/No question after another) - if the question text on screen is different from the one you just answered, your previous answer WORKED and this is a new question, even if it has the same options. Never go back to try a different option on a question that already moved on, and never treat a new question as a failed attempt.
+- Answer each question ONCE: pick the option named by the "ANSWER CHOICE" note in the message (it varies, so different answers get tested on different runs) and move on. Many funnels ask several similar questions in a row on the same page (e.g. "Ground floor rooms?" then "External doors?", or one Yes/No question after another) - if the question text on screen is different from the one you just answered, your previous answer WORKED and this is a new question, even if it has the same options. Never go back to try a different option on a question that already moved on, and never treat a new question as a failed attempt.
 - For a UK postcode field, use "SW1A 1AA" as the primary value. Always use a COMPLETE, correctly formatted postcode with both parts (outward + inward) - never a partial/outward-only postcode like "AB12".
 - If, after searching with "SW1A 1AA", there is neither a populated address dropdown NOR any new forward button anywhere on the page (see the rule above), retry ONCE with "EC1A 1BB" instead - that is the only fallback, do not invent or try any other postcode. If EC1A 1BB also produces neither a populated dropdown nor a forward button (i.e. this is your third+ attempt on this exact step), this is BLOCKED - do not keep retrying either postcode a third time.
 - This can result in a REAL lead being created in a real business's CRM/notifications, so ALWAYS use this exact identifiable test identity for any personal-info fields, never a generic placeholder like "John Doe": first name "wbt", last name "support", full name "wbt support", email "${TEST_EMAIL}", phone "${phoneNumber ?? "+447366249700"}". Use these exact values for every field of that kind, every time - NEVER invent different or randomized values for these fields, even on a retry after a submit didn't appear to progress. A stuck submit with the correct test identity is a genuine site issue to report as BLOCKED, not a sign the identity itself needs to change. You may retry with the EXACT SAME identity values at most once (in case it was a transient issue), but if it still doesn't progress, mark it BLOCKED rather than trying different personal-info values.
@@ -302,7 +311,7 @@ Rules:
             role: "user",
             content: `Current step frames:\n\n${framesHtml}${historyNote}${
               correction ? `\n\nCORRECTION NEEDED: ${correction}` : ""
-            }${retryNote ? `\n\n${retryNote}` : ""}`,
+            }${retryNote ? `\n\n${retryNote}` : ""}\n\n${randomAnswerNote()}`,
           },
         ],
       }),
@@ -515,6 +524,22 @@ function dedupeActions(actions: PlannedAction[]): PlannedAction[] {
     const key = JSON.stringify(a);
     if (seen.has(key)) return false;
     seen.add(key);
+    return true;
+  });
+}
+
+// The model sometimes both "check"s and "click"s the same answer (seen on WME:
+// check ".option-card:has-text('Rear extension')" then click it). On a
+// "choose all that apply" question each answer is a toggle, so the second action
+// un-selects it again, "Next" does nothing and the walk ends stuck. Only the
+// first check/click of each element is kept.
+function dropDoubleToggles(actions: PlannedAction[]): PlannedAction[] {
+  const pressed = new Set<string>();
+  return actions.filter((a) => {
+    if (a.type !== "click" && a.type !== "check") return true;
+    const key = `${a.frame ?? 0}|${a.selector}`;
+    if (pressed.has(key)) return false;
+    pressed.add(key);
     return true;
   });
 }
@@ -1202,7 +1227,10 @@ const MARK_QUOTE_BUTTONS_SCRIPT = `
   for (const el of els) {
     el.removeAttribute('data-wbt-quote');
     const text = (el.innerText || el.value || '').replace(/\\s+/g, ' ').trim();
-    if (!text || text.length > 60 || !/\\bquote\\b/i.test(text)) continue;
+    // "Get a quote", and buttons that start a quote without saying so: "See if
+    // your home is solar ready", "Get my price", "Check your eligibility",
+    // "Calculate your savings", "Book a free survey"...
+    if (!text || text.length > 60 || !/\\b(quotes?|ready|(get|see|check)( a| my| your)?( free| instant| online)? (price|pricing|cost)|instant price|get started|start now|check (my|your|if)|see if|find out (your|my|how much|if)|calculate|eligib|book( a| your)?( free)? (survey|visit|assessment))\\b/i.test(text)) continue;
     const href = el.getAttribute('href') || '';
     if (/^(tel|mailto|sms):/i.test(href)) continue;
     const r = el.getBoundingClientRect();
@@ -1295,11 +1323,15 @@ async function checkAllQuoteButtons(
       // never counted as "stable", and the Playwright scroll waited 30s on
       // it - stalling the whole check.
       await target.evaluate((el) => el.scrollIntoView({ block: "center" }), undefined, { timeout: 3000 }).catch(() => {});
+      // A button that animates non-stop (seen: "See if your home is battery storage
+      // ready") is never "stable", so the normal click gives up - force-click it
       await target
         .click({ timeout: 3000 })
+        .catch(() => target.click({ force: true, timeout: 3000 }))
         .catch(() => target.evaluate((el) => (el as HTMLElement).click(), undefined, { timeout: 3000 }));
       result.clicked = true;
-      await page.waitForTimeout(1000);
+      // A link can take a few seconds to start loading the next page
+      await page.waitForURL((u) => u.href !== before.url, { timeout: 5000 }).catch(() => {});
       await page.waitForLoadState("networkidle", { timeout: 1500 }).catch(() => {});
 
       const after = await page
@@ -1401,9 +1433,14 @@ export async function checkPageUi(
   viewport: ViewportName,
   screenshotDir: string,
   onProgress?: (message: string) => void,
-  shouldStop: () => boolean = () => false
+  shouldStop: () => boolean = () => false,
+  // The funnel this check is for (e.g. ".../battery-storage-quote/"): when the
+  // homepage has no quote buttons, that service's own page is checked instead
+  entryHint?: string
 ): Promise<{
   screenshot: string;
+  // The page whose quote buttons were checked - the homepage, or a service page
+  landingUrl: string;
   uiIssues: string[];
   ctaCheck: CtaCheckResult | null;
   quoteButtons: QuoteButtonResult[];
@@ -1458,7 +1495,28 @@ export async function checkPageUi(
     const grammarIssues = await grammarPromise;
     if (grammarIssues) log(`UK spelling & grammar: ${grammarIssues.length} mistake(s) found`);
 
-    const quoteButtons = await checkAllQuoteButtons(page, url, viewport, screenshotDir, log, shouldStop);
+    let quoteButtons = await checkAllQuoteButtons(page, url, viewport, screenshotDir, log, shouldStop);
+
+    // No quote buttons on the homepage: on some sites they're only on each
+    // service's own page ("See if your home is battery storage ready" on
+    // /battery-storage/). Check the buttons there - the page a visitor goes to
+    // from the homepage on the way to this funnel.
+    let landingUrl = url;
+    if (quoteButtons.length === 0 && entryHint && !shouldStop()) {
+      await openLandingPage(page, url);
+      // The page on the way to this funnel: a hero button or menu item whose page
+      // links to it (e.g. "DAMP PROOFING" -> /damp-proofing/ with "GET A QUOTE")
+      const servicePage = (await findLandingPagesFor(page, entryHint))[0];
+      if (servicePage) {
+        log(`no quote buttons on the homepage - checking ${servicePage.href}, the page that leads to this funnel (${viewport})`);
+        await openLandingPage(page, servicePage.href);
+        const found = await checkAllQuoteButtons(page, servicePage.href, viewport, screenshotDir, log, shouldStop);
+        if (found.length > 0) {
+          quoteButtons = found;
+          landingUrl = servicePage.href;
+        }
+      }
+    }
 
     // Only needed when the page has no "quote" buttons at all (e.g. its main
     // button says "Book Now" or "Contact Us") - otherwise every quote button
@@ -1477,7 +1535,7 @@ export async function checkPageUi(
     }
 
     await context.close();
-    return { screenshot: screenshotPath, uiIssues, ctaCheck, quoteButtons, grammarIssues };
+    return { screenshot: screenshotPath, uiIssues, ctaCheck, quoteButtons, grammarIssues, landingUrl };
   } finally {
     await browser.close();
   }
@@ -1922,6 +1980,132 @@ function serviceWords(targetPath: string): string[] {
 // "See if your home is solar ready", "Get my price", "Book a survey"...
 const QUOTE_BUTTON_TEXT = /quote|price|ready|get started|start now|check (my|your)|survey|book|enquir|find out|calculate/i;
 
+// Links on the current page (the homepage) to the service's own page for the funnel
+// at `target` - e.g. /battery-storage/ for /battery-storage-quote/ - that isn't a
+// quote page itself. The service's main page first: visible links before hidden
+// ones, then the shortest address.
+export async function findServicePageLinks(
+  page: Page,
+  target: string
+): Promise<{ href: string; text: string; visible: boolean; index: number }[]> {
+  const home = page.url();
+  const words = serviceWords(new URL(target, home).pathname);
+  if (words.length === 0) return [];
+  const siteHost = sameSiteHost(new URL(home).host);
+  const key = (u: string) => {
+    const url = new URL(u);
+    return `${url.hostname.replace(/^www\./, "")}${url.pathname.replace(/\/+$/, "")}`.toLowerCase();
+  };
+  const candidates: { href: string; text: string; visible: boolean; index: number }[] = [];
+  const links = page.locator("a[href]");
+  const count = await links.count().catch(() => 0);
+  for (let i = 0; i < count; i++) {
+    const link = links.nth(i);
+    const href = await link.getAttribute("href").catch(() => null);
+    if (!href) continue;
+    let url: URL;
+    try {
+      url = new URL(href, home);
+    } catch {
+      continue;
+    }
+    const path = url.pathname.toLowerCase();
+    const segments = `/${path.replace(/^\/+|\/+$/g, "")}/`;
+    if (sameSiteHost(url.host) !== siteHost || path.replace(/\/+$/, "") === "") continue;
+    if (/quote|survey|price|contact|blog|news|review|privacy|terms|career|about/.test(path)) continue;
+    if (!words.some((w) => (w.startsWith("/") ? segments.includes(w) : path.includes(w)))) continue;
+    if (candidates.some((c) => key(c.href) === key(url.toString()))) continue;
+    candidates.push({
+      href: url.toString(),
+      text: ((await link.textContent().catch(() => "")) ?? "").trim().slice(0, 40),
+      visible: await link.isVisible().catch(() => false),
+      index: i,
+    });
+  }
+  candidates.sort((a, b) => Number(b.visible) - Number(a.visible) || new URL(a.href).pathname.length - new URL(b.href).pathname.length);
+  return candidates;
+}
+
+// Pages a visitor goes through from the homepage to reach the funnel at `target`:
+// the homepage's own links (hero buttons like "DAMP PROOFING", menu items) whose
+// page has a link to the funnel - e.g. / -> /damp-proofing/ ("GET A QUOTE") ->
+// /quick-quote/. Found by loading each candidate page's HTML in the background (no
+// clicks), at most 10 of them. Pages that link to the funnel come first (service
+// pages named after the funnel, e.g. /solar/ for /solar-quote/, before others),
+// then service pages that don't. Empty when nothing on the homepage leads there.
+export async function findLandingPagesFor(
+  page: Page,
+  target: string
+): Promise<{ href: string; text: string; visible: boolean; index: number; linksToFunnel: boolean }[]> {
+  const home = page.url();
+  let targetPath: string;
+  try {
+    targetPath = new URL(target, home).pathname.replace(/\/+$/, "").toLowerCase();
+  } catch {
+    return [];
+  }
+  const siteHost = sameSiteHost(new URL(home).host);
+  const service = await findServicePageLinks(page, target);
+
+  // Every link on the homepage, in page order (index matches locator("a[href]").nth)
+  const links = (await page
+    .evaluate(() =>
+      Array.from(document.querySelectorAll("a[href]")).map((a, index) => {
+        const r = a.getBoundingClientRect();
+        const s = getComputedStyle(a);
+        return {
+          href: (a as HTMLAnchorElement).href,
+          text: ((a as HTMLElement).innerText || "").replace(/\s+/g, " ").trim().slice(0, 40),
+          visible: r.width > 0 && r.height > 0 && s.visibility !== "hidden" && s.display !== "none",
+          index,
+        };
+      })
+    )
+    .catch(() => [])) as { href: string; text: string; visible: boolean; index: number }[];
+
+  const pathOf = (u: string) => new URL(u).pathname.replace(/\/+$/, "").toLowerCase();
+  const seen = new Set<string>([pathOf(home), targetPath]);
+  const candidates: { href: string; text: string; visible: boolean; index: number; service: boolean }[] = [];
+  for (const c of service) {
+    if (seen.has(pathOf(c.href))) continue;
+    seen.add(pathOf(c.href));
+    candidates.push({ ...c, service: true });
+  }
+  for (const l of links.filter((x) => x.visible)) {
+    let url: URL;
+    try {
+      url = new URL(l.href);
+    } catch {
+      continue;
+    }
+    const path = url.pathname.replace(/\/+$/, "").toLowerCase();
+    if (!/^https?:$/.test(url.protocol) || sameSiteHost(url.host) !== siteHost || !path || seen.has(path)) continue;
+    // Not where a quote journey starts
+    if (/\.(pdf|jpe?g|png|webp|gif|zip)$|\/(contact|about|blog|news|reviews?|testimonials?|privacy|terms|cookie|careers?|sitemap|faqs?|gallery|team|wp-|feed|tag|category|author)/.test(path)) continue;
+    seen.add(path);
+    candidates.push({ href: url.toString(), text: l.text, visible: true, index: l.index, service: false });
+  }
+
+  // Which of them link to the funnel - read each page's HTML, quickest first
+  const escapedPath = targetPath.replace(/[.*+?^${}()|[\]\\]/g, (ch) => `\\${ch}`);
+  const linkToTarget = new RegExp(`href=["'](?:https?://[^"'/]+)?${escapedPath}/?(?:[?#][^"']*)?["']`, "i");
+  const checked = await Promise.all(
+    candidates.slice(0, 10).map(async (c) => {
+      const html = await page
+        .context()
+        .request.get(c.href, { timeout: 10000 })
+        .then((r) => (r.ok() ? r.text() : ""))
+        .catch(() => "");
+      return { ...c, linksToFunnel: linkToTarget.test(html) };
+    })
+  );
+  const order = (c: (typeof checked)[number]) => (c.linksToFunnel ? 0 : 2) + (c.service ? 0 : 1);
+  return checked
+    .filter((c) => c.linksToFunnel || c.service)
+    .sort((a, b) => order(a) - order(b))
+    .map(({ service: _service, ...c }) => c);
+}
+
 // From the homepage, get into the funnel at `target` the way a visitor does:
 // 1. click a link straight to it, if the homepage has one;
 // 2. otherwise open the service's own landing page (e.g. /solar/ for /solar-quote/)
@@ -1975,38 +2159,8 @@ export async function enterFunnel(page: Page, target: string, log: (msg: string)
   // 1. Through the service's own landing page first (homepage → /solar/ → its quote
   //    button → /solar-quote/), the way most visitors arrive, so that page's quote
   //    button gets tested too
-  const words = serviceWords(new URL(target, home).pathname);
-  if (words.length > 0) {
-    // Links on the homepage to a page about this service that isn't a quote page itself
-    const candidates: { href: string; text: string; visible: boolean; index: number }[] = [];
-    const links = page.locator("a[href]");
-    const count = await links.count().catch(() => 0);
-    for (let i = 0; i < count; i++) {
-      const link = links.nth(i);
-      const href = await link.getAttribute("href").catch(() => null);
-      if (!href) continue;
-      let url: URL;
-      try {
-        url = new URL(href, home);
-      } catch {
-        continue;
-      }
-      const path = url.pathname.toLowerCase();
-      const segments = `/${path.replace(/^\/+|\/+$/g, "")}/`;
-      if (sameSiteHost(url.host) !== siteHost || path.replace(/\/+$/, "") === "") continue;
-      if (/quote|survey|price|contact|blog|news|review|privacy|terms|career|about/.test(path)) continue;
-      if (!words.some((w) => (w.startsWith("/") ? segments.includes(w) : path.includes(w)))) continue;
-      if (candidates.some((c) => normalize(c.href) === normalize(url.toString()))) continue;
-      candidates.push({
-        href: url.toString(),
-        text: ((await link.textContent().catch(() => "")) ?? "").trim().slice(0, 40),
-        visible: await link.isVisible().catch(() => false),
-        index: i,
-      });
-    }
-    // The service's main page first: shortest address, visible links before hidden ones
-    candidates.sort((a, b) => Number(b.visible) - Number(a.visible) || new URL(a.href).pathname.length - new URL(b.href).pathname.length);
-
+  const candidates = await findLandingPagesFor(page, target);
+  if (candidates.length > 0) {
     for (const landing of candidates.slice(0, 2)) {
       if (entered) break;
       if (normalize(page.url()) !== normalize(home)) {
@@ -3166,8 +3320,10 @@ async function testFinalActionButtons(
  * and continue, not abandon the whole form. Only throws if EVERY action
  * failed, meaning the AI's plan was entirely unusable on this page.
  */
-async function applyActions(page: Page, actions: PlannedAction[]): Promise<string[]> {
+async function applyActions(page: Page, plannedActions: PlannedAction[]): Promise<string[]> {
   const notes: string[] = [];
+  // Never press the same answer twice - on a toggle it would un-select it again
+  const actions = dropDoubleToggles(plannedActions);
   let failedCount = 0;
   // Radio groups already answered in this batch (frame index + group name).
   const answeredRadioGroups = new Set<string>();
@@ -3683,8 +3839,19 @@ export async function walkFunnel(
   const shouldStop = opts.shouldStop ?? (() => false);
   // Cleared once the walk is inside the funnel (see enterFunnel below)
   let aiEntryHint = opts.entryHint;
-  const ask = (framesHtml: string, failedAttempts: PlannedAction[][], correction?: string) =>
-    askModelForNextActions(framesHtml, failedAttempts, twilioNumber, correction, aiEntryHint);
+  // Messages the site showed in browser pop-ups (alert / confirm). The test browser
+  // closes them by itself, so without this the model never saw them - seen on a
+  // postcode search whose "Address lookup failed" alert left it guessing for steps.
+  const siteAlerts: string[] = [];
+  let alertsShownToModel = 0;
+  const ask = (framesHtml: string, failedAttempts: PlannedAction[][], correction?: string) => {
+    const fresh = siteAlerts.slice(alertsShownToModel);
+    alertsShownToModel = siteAlerts.length;
+    const alertNote = fresh.length
+      ? `\n\nTHE PAGE SHOWED A BROWSER POP-UP after your last actions (already closed): ${fresh.map((m) => `"${m}"`).join("; ")}. That is the site's own message - take it into account.`
+      : "";
+    return askModelForNextActions(framesHtml + alertNote, failedAttempts, twilioNumber, correction, aiEntryHint);
+  };
   if (opts.entryHint) onProgress(`entering the funnel via the link to ${opts.entryHint}`);
   onProgress(
     twilioNumber ? `Twilio number for this run: ${twilioNumber}` : "Twilio not configured for this run"
@@ -3782,6 +3949,15 @@ export async function walkFunnel(
       apiCalls.push(note);
       console.log(`[ai-walker] ${note}`);
     }
+  });
+
+  page.on("dialog", async (dialog) => {
+    const message = dialog.message().replace(/\s+/g, " ").trim().slice(0, 200);
+    if (message) {
+      siteAlerts.push(message);
+      log(`the page showed a pop-up message: "${message}"`);
+    }
+    await dialog.accept().catch(() => {});
   });
 
   page.on("response", async (response) => {
@@ -4153,8 +4329,10 @@ export async function walkFunnel(
         if (plan.isComplete) {
           log(`step ${stepNumber} - COMPLETE`);
         } else {
-          failure = `Blocked at step ${stepNumber}: ${plan.reasoning}`;
-          log(`step ${stepNumber} - BLOCKED: ${plan.reasoning}`);
+          // The site's own pop-up message is usually the real reason - keep the latest
+          const siteSaid = siteAlerts.length ? ` | Site message: "${siteAlerts[siteAlerts.length - 1]}"` : "";
+          failure = `Blocked at step ${stepNumber}: ${plan.reasoning}${siteSaid}`;
+          log(`step ${stepNumber} - BLOCKED: ${plan.reasoning}${siteSaid}`);
         }
         log(`step ${stepNumber} - tracking: GTM=${tracking.gtmPresent} gtag=${tracking.gtagPresent}`);
         steps.push({

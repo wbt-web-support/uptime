@@ -97,6 +97,55 @@ export async function sendEmailAlert(
   }
 }
 
+// A funnel test changed result: it broke, or it works again. Sent to
+// FUNNEL_ALERT_EMAILS (comma-separated), or ADMIN_EMAIL when that isn't set.
+export async function sendFunnelAlert(options: {
+  kind: 'broken' | 'fixed';
+  funnelName: string;
+  funnelUrl: string;
+  reason: string | null;
+  reportUrl: string;
+}): Promise<boolean> {
+  const recipients = (process.env.FUNNEL_ALERT_EMAILS || process.env.ADMIN_EMAIL || '')
+    .split(',')
+    .map(e => e.trim())
+    .filter(Boolean);
+  if (!recipients.length || !process.env.SMTP_HOST) return false;
+
+  const broken = options.kind === 'broken';
+  const escape = (s: string) => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
+  const subject = broken
+    ? `Funnel not working: ${options.funnelName}`
+    : `Funnel working again: ${options.funnelName}`;
+  const text = broken
+    ? `The quote funnel "${options.funnelName}" (${options.funnelUrl}) stopped working in its latest test.\n\nWhy: ${options.reason ?? 'see the report'}\n\nFull report: ${options.reportUrl}`
+    : `The quote funnel "${options.funnelName}" (${options.funnelUrl}) works again - every stage passed in its latest test.\n\nReport: ${options.reportUrl}`;
+  const html = `
+    <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 5px;">
+      <h1 style="color: ${broken ? '#d32f2f' : '#2e7d32'}; margin-top: 0; font-size: 22px;">${escape(subject)}</h1>
+      <p style="font-size: 15px; line-height: 1.5;">
+        ${broken ? 'This quote funnel stopped working in its latest test.' : 'This quote funnel works again - every stage passed in its latest test.'}
+      </p>
+      <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+        <tr><td style="padding: 8px 0; border-bottom: 1px solid #e0e0e0; font-weight: bold; width: 110px;">Funnel</td><td style="padding: 8px 0; border-bottom: 1px solid #e0e0e0;">${escape(options.funnelName)}</td></tr>
+        <tr><td style="padding: 8px 0; border-bottom: 1px solid #e0e0e0; font-weight: bold;">Page</td><td style="padding: 8px 0; border-bottom: 1px solid #e0e0e0;">${escape(options.funnelUrl)}</td></tr>
+        ${broken ? `<tr><td style="padding: 8px 0; border-bottom: 1px solid #e0e0e0; font-weight: bold;">Why</td><td style="padding: 8px 0; border-bottom: 1px solid #e0e0e0;">${escape(options.reason ?? 'See the report')}</td></tr>` : ''}
+        <tr><td style="padding: 8px 0; border-bottom: 1px solid #e0e0e0; font-weight: bold;">Time</td><td style="padding: 8px 0; border-bottom: 1px solid #e0e0e0;">${new Date().toLocaleString('en-GB')}</td></tr>
+      </table>
+      <p style="margin-top: 20px;"><a href="${escape(options.reportUrl)}" style="background: #1a73e8; color: #fff; padding: 10px 16px; border-radius: 4px; text-decoration: none;">Open the website report</a></p>
+      <p style="margin-top: 30px; font-size: 12px; color: #666; text-align: center;">This is an automated message from your Uptime Monitor's Funnel Test.</p>
+    </div>
+  `;
+  try {
+    await emailTransporter.sendMail({ from: process.env.SMTP_FROM || 'alerts@example.com', to: recipients.join(', '), subject, text, html });
+    console.log(`Funnel alert sent (${options.kind}) for ${options.funnelName} to ${recipients.length} recipient(s)`);
+    return true;
+  } catch (error) {
+    console.error('Failed to send funnel alert:', error);
+    return false;
+  }
+}
+
 // Send SMS notification
 export async function sendSMSAlert(
   options: AlertOptions,

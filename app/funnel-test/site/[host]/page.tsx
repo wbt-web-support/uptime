@@ -32,6 +32,49 @@ interface DeviceResult {
   gtm_found?: boolean | null;
 }
 
+// One past test, as saved by utils/funnel-tester.ts (kind "history")
+interface HistoryEntry {
+  started_at: string | null;
+  finished_at: string;
+  result: "working" | "not_working" | "error";
+  reason: string | null;
+}
+
+// The last tests of a funnel as a row of dots, oldest left, plus when it broke
+function HistoryStrip({ entries }: { entries: HistoryEntry[] }) {
+  if (entries.length === 0) return null;
+  const newestFirst = entries;
+  const latest = newestFirst[0];
+  const lastWorkedIndex = newestFirst.findIndex(e => e.result === "working");
+  const lastWorked = lastWorkedIndex >= 0 ? newestFirst[lastWorkedIndex] : null;
+  // When it broke: the oldest of the failed tests since it last worked
+  const brokeAt = latest.result !== "working"
+    ? newestFirst[(lastWorkedIndex >= 0 ? lastWorkedIndex : newestFirst.length) - 1]
+    : null;
+  const dot = { working: "bg-green-500", not_working: "bg-red-500", error: "bg-gray-400" };
+  const label = { working: "Working", not_working: "Not working", error: "Didn't finish" };
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b px-4 py-2.5 text-xs text-muted-foreground">
+      <span className="font-medium text-foreground">Last {entries.length} test{entries.length === 1 ? "" : "s"}</span>
+      <span className="flex items-center gap-1" aria-label="Test history, oldest first">
+        {[...newestFirst].reverse().map((e, i) => (
+          <span
+            key={i}
+            className={`h-3 w-3 rounded-full ${dot[e.result]}`}
+            title={`${new Date(e.finished_at).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })} - ${label[e.result]}${e.reason ? `: ${e.reason}` : ""}`}
+          />
+        ))}
+      </span>
+      {latest.result !== "working" && (
+        <span>
+          {brokeAt && <>Not working since <span className="font-medium text-foreground">{shortDate(brokeAt.finished_at)}</span></>}
+          {lastWorked ? <> · last worked {shortDate(lastWorked.finished_at)}</> : entries.length > 1 ? <> · hasn&apos;t worked in any of these tests</> : null}
+        </span>
+      )}
+    </div>
+  );
+}
+
 interface UiResult {
   status: "ok" | "issues" | "error";
   ui_issues: string[];
@@ -39,6 +82,8 @@ interface UiResult {
   quote_buttons_working: number;
   // UK spelling / grammar mistakes in the page text; desktop only, missing on older checks
   grammar_issues?: { found: string; suggestion: string; reason: string; status?: "fix" | "fixed" }[] | null;
+  // Where the quote buttons were checked: the homepage, or a service page when it had none
+  landing_url?: string | null;
   error: string | null;
   report_id: string | null;
 }
@@ -142,6 +187,7 @@ export default function SiteReportPage() {
   const host = decodeURIComponent(params.host ?? "").toLowerCase();
   const supabase = useMemo(() => createClient(), []);
   const [funnels, setFunnels] = useState<Funnel[] | null>(null);
+  const [history, setHistory] = useState<Record<string, HistoryEntry[]>>({});
   const [clientName, setClientName] = useState<string | null>(null);
   const [error, setError] = useState("");
   // A switch that couldn't be saved (e.g. the test_enabled column is missing)
@@ -195,6 +241,19 @@ export default function SiteReportPage() {
       }
       const site = (data as Funnel[]).filter(f => hostOf(f.url) === host);
       setFunnels(site);
+      // Last tests of each funnel (small summaries, newest first)
+      if (site.length > 0) {
+        const { data: rows } = await supabase
+          .from("funnel_reports")
+          .select("funnel_id, report")
+          .eq("kind", "history")
+          .in("funnel_id", site.map(f => f.id))
+          .order("created_at", { ascending: false })
+          .limit(site.length * 30);
+        const byFunnel: Record<string, HistoryEntry[]> = {};
+        for (const r of rows ?? []) (byFunnel[r.funnel_id] ??= []).push(r.report as HistoryEntry);
+        setHistory(byFunnel);
+      }
       const domainId = site.find(f => f.domain_id)?.domain_id;
       if (domainId) {
         const { data: d } = await supabase.from("domains").select("display_name, domain_name").eq("id", domainId).maybeSingle();
@@ -322,6 +381,20 @@ export default function SiteReportPage() {
         <h2 className="text-lg font-semibold">Landing page</h2>
         <p className="mb-3 text-sm text-muted-foreground">
           Every &quot;Get a quote&quot; button on the homepage is clicked to check it leads somewhere. Nothing is submitted.
+          {(() => {
+            // The homepage had none, so the funnel's service page was checked instead
+            const checked = uiSource?.ui_results?.desktop?.landing_url ?? uiSource?.ui_results?.mobile?.landing_url;
+            const path = checked ? new URL(checked).pathname : "/";
+            return path.replace(/\/+$/, "") !== "" ? (
+              <>
+                {" "}This website has no quote buttons on its homepage, so they were checked on{" "}
+                <a href={checked!} target="_blank" rel="noopener noreferrer" className="font-medium text-foreground hover:text-brand">
+                  {path}
+                </a>
+                .
+              </>
+            ) : null;
+          })()}
         </p>
         {!uiSource ? (
           <p className="rounded-lg border p-4 text-sm text-muted-foreground">Not checked yet - it runs at the start of every test.</p>
@@ -491,6 +564,8 @@ export default function SiteReportPage() {
                     </a>
                   </div>
                 </div>
+
+                <HistoryStrip entries={history[f.id] ?? []} />
 
                 {f.test_status === "running" ? (
                   <p className="px-4 py-4 text-sm text-blue-700 dark:text-blue-300">Testing right now…</p>

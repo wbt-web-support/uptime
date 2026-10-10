@@ -389,6 +389,16 @@ const MAX_BATCH_SIZE = 20;
 // Rotates through TWILIO_PHONE_NUMBERS across single-lane runs (see /run-batch)
 let nextBatchNumberIndex = 0;
 
+// Test numbers held by a walk that is running right now. When desktop and mobile
+// run at the same time, each keeps its own number - two walks waiting for a code on
+// one number couldn't tell whose code is whose - so neither may switch to the
+// number the other one is using.
+const numbersInUse = new Set<string>();
+
+// Desktop and mobile of one site at the same time (about half the time), when two
+// different numbers are free; otherwise one after the other as before
+const PARALLEL_DEVICES = process.env.FUNNEL_PARALLEL_DEVICES !== "false";
+
 // ---------------------------------------------------------------------------
 // SMS code usage per number per day. Twilio doesn't cap receiving, but a number
 // that collects lots of verification codes risks Twilio's OTP filter (30038) and
@@ -589,7 +599,7 @@ async function runOneViewport(
         entryHint,
         shouldStop,
         testFinalActions,
-        numberAvailable: (n) => hasOtpBudget(n) && !blockedSince(n),
+        numberAvailable: (n) => hasOtpBudget(n) && !blockedSince(n) && !numbersInUse.has(n),
         onProgress: (msg) => status.messages.push(msg),
       });
       // Every number the site was asked to text a code to counts towards its daily
@@ -620,7 +630,7 @@ async function runOneViewport(
     const otherNumber = (process.env.TWILIO_PHONE_NUMBERS ?? "")
       .split(",")
       .map((n) => n.trim())
-      .find((n) => n && n !== phoneNumber && hasOtpBudget(n) && !blockedSince(n));
+      .find((n) => n && n !== phoneNumber && hasOtpBudget(n) && !blockedSince(n) && !numbersInUse.has(n));
     const alreadyTriedOther = !!otherNumber && (result.otpNumbers ?? []).includes(otherNumber);
     if (phoneNumber && otherNumber && !alreadyTriedOther && !result.completed && /^OTP required/.test(result.failure ?? "") && !shouldStop()) {
       const note = `No SMS code reached ${phoneNumber} - testing ${viewport} again from the start on ${otherNumber}`;
@@ -740,17 +750,26 @@ app.post("/run-batch", (req, res) => {
         for (let i = lane; i < batch.items.length; i += laneCount) {
           batch.currentIndex = i;
           const item = batch.items[i];
-          for (const viewport of viewports) {
-            await runOneViewport(
-              item.url,
-              item.name,
-              viewport,
-              item.runs[viewport]!,
-              numberFor(lane, item.url),
-              item.entryHint,
-              () => !!batch.cancelled,
-              testFinalActions
-            );
+          // Each device runs on a number reserved for it until its walk ends
+          const runDevice = async (viewport: Viewport, number: string | undefined) => {
+            if (number) numbersInUse.add(number);
+            try {
+              await runOneViewport(item.url, item.name, viewport, item.runs[viewport]!, number, item.entryHint, () => !!batch.cancelled, testFinalActions);
+            } finally {
+              if (number) numbersInUse.delete(number);
+            }
+          };
+          const first = numberFor(lane, item.url);
+          // A second free number, different from the first, for the other device
+          const free = (n: string) => n !== first && hasOtpBudget(n) && !blockedSince(n);
+          const second = numbers.find((n) => free(n) && !siteAvoidsNumber(item.url, n)) ?? numbers.find(free);
+          if (PARALLEL_DEVICES && laneCount === 1 && viewports.length === 2 && first && second) {
+            logger.info(`${siteKey(item.url)}: testing desktop (${first}) and mobile (${second}) at the same time`);
+            await Promise.all([runDevice(viewports[0], first), runDevice(viewports[1], second)]);
+          } else {
+            for (const [k, viewport] of viewports.entries()) {
+              await runDevice(viewport, k === 0 ? first : numberFor(lane, item.url));
+            }
           }
         }
       })
@@ -809,6 +828,8 @@ interface UiCheckViewportStatus {
   quoteButtons?: QuoteButtonResult[];
   // UK spelling / grammar mistakes in the page text (desktop only; null on mobile)
   grammarIssues?: GrammarIssue[] | null;
+  // The page whose quote buttons were checked: the homepage, or a service page
+  landingUrl?: string;
   error?: string;
 }
 
@@ -819,6 +840,8 @@ function newUiCheckViewportStatus(): UiCheckViewportStatus {
 interface UiCheckItemStatus {
   url: string;
   name: string;
+  // The funnel being tested - its service page is checked when the homepage has no quote buttons
+  entryHint?: string;
   desktop: UiCheckViewportStatus;
   mobile: UiCheckViewportStatus;
 }
@@ -837,7 +860,8 @@ async function runOneUiCheck(
   name: string,
   viewport: "desktop" | "mobile",
   status: UiCheckViewportStatus,
-  shouldStop: () => boolean = () => false
+  shouldStop: () => boolean = () => false,
+  entryHint?: string
 ): Promise<void> {
   if (shouldStop()) {
     status.status = "failed";
@@ -848,13 +872,14 @@ async function runOneUiCheck(
   const timestamp = `${new Date().toISOString().replace(/[:.]/g, "-")}-${viewport}`;
   const screenshotDir = path.join(SCREENSHOT_ROOT, `ui-check-${slugify(name)}-${timestamp}`);
   try {
-    const result = await checkPageUi(url, viewport, screenshotDir, (msg) => status.messages.push(msg), shouldStop);
+    const result = await checkPageUi(url, viewport, screenshotDir, (msg) => status.messages.push(msg), shouldStop, entryHint);
     status.status = "completed";
     status.screenshot = result.screenshot;
     status.uiIssues = result.uiIssues;
     status.ctaCheck = result.ctaCheck;
     status.quoteButtons = result.quoteButtons;
     status.grammarIssues = result.grammarIssues;
+    status.landingUrl = result.landingUrl;
   } catch (err) {
     status.status = "failed";
     // A site that can't be opened (expired SSL, unreachable, too slow) is the
@@ -870,7 +895,7 @@ async function runOneUiCheck(
 // takes seconds per viewport instead of the minutes a full walkFunnel()
 // takes, for when someone only wants a fast visual clickability check.
 app.post("/check-ui-batch", (req, res) => {
-  let parsedItems: { url: string; name: string }[];
+  let parsedItems: BatchItemInput[];
   try {
     parsedItems = parseBatchItems(req.body?.items);
   } catch (err) {
@@ -883,6 +908,7 @@ app.post("/check-ui-batch", (req, res) => {
     items: parsedItems.map((it) => ({
       url: it.url,
       name: it.name,
+      entryHint: it.entryHint,
       desktop: newUiCheckViewportStatus(),
       mobile: newUiCheckViewportStatus(),
     })),
@@ -896,8 +922,8 @@ app.post("/check-ui-batch", (req, res) => {
       batch.currentIndex = i;
       const item = batch.items[i];
       const stopped = () => !!batch.cancelled;
-      await runOneUiCheck(item.url, item.name, "desktop", item.desktop, stopped);
-      await runOneUiCheck(item.url, item.name, "mobile", item.mobile, stopped);
+      await runOneUiCheck(item.url, item.name, "desktop", item.desktop, stopped, item.entryHint);
+      await runOneUiCheck(item.url, item.name, "mobile", item.mobile, stopped, item.entryHint);
     }
     batch.currentIndex = batch.items.length;
     batch.done = true;
