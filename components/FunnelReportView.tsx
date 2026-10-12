@@ -135,6 +135,11 @@ function FinalActions({ actions, depth = 0 }: { actions: FinalActionLike[]; dept
                 </p>
               )}
               {a.warning && !a.error && <p className="mt-1 text-xs text-amber-600">{a.warning}</p>}
+              {a.emailNote && (
+                <p className={`mt-1 text-xs ${a.emailNote.startsWith("Email sent") ? "text-green-700 dark:text-green-400" : "text-muted-foreground"}`}>
+                  📧 {a.emailNote}
+                </p>
+              )}
             </div>
           </div>
           {a.nestedActions && a.nestedActions.length > 0 && (

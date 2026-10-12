@@ -29,6 +29,7 @@ interface DeviceResult {
   site_problem?: string | null;
   results_buttons?: { ok: number; total: number; failed: string[]; payment: string } | null;
   otp_seen?: boolean;
+  email_note?: string | null;
   gtm_found?: boolean | null;
 }
 
@@ -649,6 +650,15 @@ export default function SiteReportPage() {
                                       </p>
                                     )}
                                   </div>
+                                )}
+                                {r?.email_note && (
+                                  <p
+                                    className={`mt-2 text-xs ${
+                                      r.email_note.startsWith("Email sent") ? "text-green-700 dark:text-green-400" : "text-muted-foreground"
+                                    }`}
+                                  >
+                                    📧 Quote form: {r.email_note}
+                                  </p>
                                 )}
                                 {gtmMissing(r) && (
                                   <div className="mt-2 space-y-1">

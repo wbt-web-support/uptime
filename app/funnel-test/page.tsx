@@ -718,22 +718,25 @@ export default function FunnelTestPage() {
   // SMS verification codes each test number has received today, against its daily limit
   // blockedAt: Twilio refused to send verification codes to this number (its
   // anti-fraud block); Twilio lifts these within 12 hours, and the tester tries the number again after that
-  const [smsUsage, setSmsUsage] = useState<{ limit: number; numbers: { number: string; used: number; blockedAt?: string | null }[] } | null>(null);
+  // limit null = no daily limit (the default)
+  const [smsUsage, setSmsUsage] = useState<{ limit: number | null; numbers: { number: string; used: number; blockedAt?: string | null }[] } | null>(null);
+  const smsUsedUp = (n: { used: number }) => !!smsUsage?.limit && n.used >= smsUsage.limit;
+  const smsNearlyUsedUp = (n: { used: number }) => !!smsUsage?.limit && n.used >= Math.ceil(smsUsage.limit * 0.75);
 
   // One warning per test number that is blocked, used up or nearly used up today
   const smsWarnings = (() => {
     if (!smsUsage) return [] as { level: "red" | "amber"; text: string }[];
     const out: { level: "red" | "amber"; text: string }[] = [];
-    const usable = smsUsage.numbers.filter(n => !n.blockedAt && n.used < smsUsage.limit);
+    const usable = smsUsage.numbers.filter(n => !n.blockedAt && !smsUsedUp(n));
     for (const n of smsUsage.numbers) {
       if (n.blockedAt) {
         out.push({
           level: "red",
           text: `${n.number} is temporarily blocked by Twilio from receiving verification codes (since ${new Date(n.blockedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}). Twilio blocks lift within 12 hours; the number is tried again at ${new Date(new Date(n.blockedAt).getTime() + 12 * 3600_000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}. Tests use the other number meanwhile.`,
         });
-      } else if (n.used >= smsUsage.limit) {
+      } else if (smsUsedUp(n)) {
         out.push({ level: "red", text: `${n.number} has used all ${smsUsage.limit} of today's SMS codes. Tests use the other number until tomorrow.` });
-      } else if (n.used >= Math.ceil(smsUsage.limit * 0.75)) {
+      } else if (smsNearlyUsedUp(n)) {
         out.push({ level: "amber", text: `${n.number} has used ${n.used} of its ${smsUsage.limit} SMS codes today - nearly at the limit.` });
       }
     }
@@ -1967,7 +1970,10 @@ export default function FunnelTestPage() {
               ))}
             </ul>
             <p className="mt-3 text-xs text-muted-foreground">
-              Each number may receive {smsUsage?.limit ?? 20} SMS codes a day. Funnels with an SMS step need a free number to pass.
+              {smsUsage?.limit
+                ? `Each number may receive ${smsUsage.limit} SMS codes a day. `
+                : "There's no daily limit on SMS codes. "}
+              Funnels with an SMS step need a number that isn&apos;t blocked to pass.
             </p>
             <div className="mt-4 flex justify-end">
               <Button onClick={dismissSmsPopup} autoFocus>OK, got it</Button>
@@ -1988,21 +1994,21 @@ export default function FunnelTestPage() {
           {smsUsage && smsUsage.numbers.length > 0 && (
             <span
               className="inline-flex flex-wrap items-center gap-x-2"
-              title={`SMS verification codes each test number has received today, out of ${smsUsage.limit} a day.`}
+              title={`SMS verification codes each test number has received today${smsUsage.limit ? `, out of ${smsUsage.limit} a day` : " (no daily limit)"}.`}
             >
               <Smartphone className="h-3.5 w-3.5" /> SMS today:
               {smsUsage.numbers.map(n => (
                 <span
                   key={n.number}
                   className={
-                    n.blockedAt || n.used >= smsUsage.limit
+                    n.blockedAt || smsUsedUp(n)
                       ? "font-medium text-red-600 dark:text-red-400"
-                      : n.used >= Math.ceil(smsUsage.limit * 0.75)
+                      : smsNearlyUsedUp(n)
                         ? "font-medium text-amber-600"
                         : ""
                   }
                 >
-                  …{n.number.slice(-4)} {n.blockedAt ? "blocked" : `${n.used}/${smsUsage.limit}`}
+                  …{n.number.slice(-4)} {n.blockedAt ? "blocked" : smsUsage.limit ? `${n.used}/${smsUsage.limit}` : `${n.used} sent`}
                 </span>
               ))}
               {smsWarnings.length > 0 && (

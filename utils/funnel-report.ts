@@ -20,7 +20,23 @@ export interface FinalActionLike {
   resultingUrl: string;
   error: string | null;
   warning: string | null;
+  // For a button whose form was sent: whether the site said an email went out
+  emailNote?: string | null;
   nestedActions?: FinalActionLike[];
+}
+
+// A short note on whether submitting the QUOTE FORM sent an email, from the site's
+// own reply - e.g. {"success":true,"message":"Data Saved Successfully & Both Emails
+// Sent Successfully!"}. The first such reply in the walk is the quote form's (the
+// results-page buttons' forms come after it). Null when the form wasn't submitted.
+export function quoteFormEmailNote(report: Pick<WalkReport, "completed" | "apiCalls">): string | null {
+  for (const call of report.apiCalls ?? []) {
+    const m = call.match(/^2\d\d POST \S+ -> ([\s\S]*)$/);
+    if (!m || !/"success"\s*:\s*true/i.test(m[1])) continue;
+    const message = m[1].match(/"message"\s*:\s*"([^"]{1,140})"/)?.[1];
+    if (message && /e-?mails?/i.test(message)) return `Email sent - the site said: "${message.trim()}"`;
+  }
+  return report.completed ? "No email confirmation from the site" : null;
 }
 
 // One saved walk (WalkResult in the backend's aiWalker.ts)
@@ -210,6 +226,10 @@ export interface SiteRequestProblem {
 // 403 "session expired") is usually the real reason - the AI only sees an empty
 // dropdown and calls it "blocked". Third-party trackers are ignored: their errors
 // (a duplicate-lead 409 from a CRM pixel, say) don't stop the form.
+// Services the client sites' quote forms and SMS codes run on - their errors stop
+// the form just like the site's own
+const FORM_PROVIDER_HOST = /(^|\.)(quoteform\.ai|webuildapi\.com|quotebuilderpro\.com)$/i;
+
 export function detectSiteRequestProblem(report: Pick<WalkReport, "startUrl" | "apiCalls">): SiteRequestProblem | null {
   let siteHost: string;
   try {
@@ -234,7 +254,16 @@ export function detectSiteRequestProblem(report: Pick<WalkReport, "startUrl" | "
     } catch {
       continue;
     }
-    if (url.hostname.replace(/^www\./, "") !== siteHost) continue;
+    // The site itself, or the quote-form provider its form runs on (seen: Quote
+    // Form's api.quoteform.ai answering 404 "Client not found", which left the
+    // phone-verify page loading forever)
+    const host = url.hostname.replace(/^www\./, "");
+    if (host !== siteHost && !FORM_PROVIDER_HOST.test(host)) continue;
+    // Harmless "nothing to show" replies the provider gives on working forms
+    // (e.g. 404 "No data found for thermostat filters") aren't problems
+    if (status === 404 || status === 400) {
+      if (/no data found|not found for/i.test(m[4]) && !/client not found/i.test(m[4])) continue;
+    }
 
     let message: string | null = null;
     if (errorBody) {
@@ -312,7 +341,20 @@ export function explainFailure(failure: string | null | undefined, siteProblem?:
   const site = siteProblem ?? "";
   if (!f && !site) return null;
 
-  // 0. The site itself is broken in a way the walker could pin down exactly
+  // 0a. The page stalled (stuck loading, nothing to click) right after the site
+  // showed its own error pop-up - that message is the reason, not the tester
+  const siteMessage = f.match(/\| Site message: "(.+)"$/)?.[1];
+  if (siteMessage && /Every action failed|Action execution failed|could not be found|loading screen|never finished loading|stuck|ran out of steps/i.test(f)) {
+    const step = f.match(/step (\d+)/)?.[1];
+    return {
+      owner: "website",
+      title: `The website showed an error: "${siteMessage}"`,
+      what: `${step ? `At step ${step}, the` : "The"} website itself showed the message "${siteMessage}" and then didn't load the next page, so the form couldn't go on.${site ? ` ${site}` : ""}`,
+      fix: "Try the form yourself. If you see the same message, the site (or the service its form runs on) is failing - send this message and the time to its developer.",
+    };
+  }
+
+  // 0b. The site itself is broken in a way the walker could pin down exactly
   const codeError = f.match(/\| Site code error: (.+)$/)?.[1];
   if (codeError) {
     const step = f.match(/step (\d+)/)?.[1];
@@ -439,7 +481,14 @@ export function explainFailure(failure: string | null | undefined, siteProblem?:
     const step = f.match(/step (\d+)/)?.[1];
     return { owner: "tester", title: "The tester couldn't find the buttons or fields it needed", what: `${step ? `At step ${step}, the` : "The"} fields or buttons the tester tried to use weren't on the page (the page changed, or they're hidden).`, fix: "Run it again. If it fails at the same step every time, check that step in the full report - the form may be broken there." };
   }
-  if (/postcode|address dropdown|address/i.test(f) && /^Blocked/i.test(f)) {
+  // Only when the address search itself failed - not whenever "address" comes up
+  // (seen: the AI typing addresses into a checkout form, which said nothing about
+  // the postcode lookup but was reported as "No addresses came up")
+  if (
+    /^Blocked/i.test(f) &&
+    /populated address|failed to produce .{0,40}address|address (dropdown|list) (never|didn'?t|did not|wasn'?t|was not)|no address(es)? (came up|appeared|were found|found|in the list)|address (lookup|search) (failed|returned nothing|is broken)|postcode (search|lookup) (failed|returned nothing|didn'?t)/i.test(f) &&
+    !/checkout|payment|stripe|installation date|card details/i.test(f)
+  ) {
     return { owner: "website", title: "No addresses came up for the postcode", what: "The tester searched two valid postcodes (SW1A 1AA and EC1A 1BB), but the address list never appeared, so it couldn't continue.", fix: "Try a postcode search on the site yourself. If no addresses appear, the site's address lookup is broken (check its API key or cache)." };
   }
   if (/checkbox|terms|submi(t|ssion)/i.test(f) && /^Blocked/i.test(f)) {
@@ -641,8 +690,16 @@ export function buildSummary(report: WalkReport): SummaryItem[] {
     ? { title: "Form", value: "Submitted", note: `${steps.length} steps`, tone: "good" }
     : { title: "Form", value: "Not finished", note: recorded ? `Stopped at step ${steps.length}` : "Did not start", tone: "bad" };
 
+  // Whether submitting the quote form sent an email, from the site's own reply
+  const emailNote = quoteFormEmailNote(report);
+  const email: SummaryItem = !emailNote
+    ? { title: "Email", value: "Not sent", note: "Form not submitted", tone: "neutral" }
+    : emailNote.startsWith("Email sent")
+      ? { title: "Email", value: "Sent", note: emailNote.replace(/^Email sent - the site said: /, "").slice(0, 60), tone: "good" }
+      : { title: "Email", value: "Not confirmed", note: "The site didn't say", tone: "warn" };
+
   // No "Looks" item: design remarks aren't errors, so they aren't shown
-  return [form, otp, tracking, buttons, payment];
+  return [form, otp, email, tracking, buttons, payment];
 }
 
 export const TONE_CLASS: Record<Tone, { card: string; value: string; dot: string }> = {

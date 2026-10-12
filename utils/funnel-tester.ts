@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/utils/supabase/server";
 import { sendFunnelAlert } from "@/utils/notifications";
-import { buildSummary, CHECKOUT_BUTTON, deriveStages, explainFailure, GTM_MISSING, summarizeWalk, type FinalActionLike, type WalkReport } from "@/utils/funnel-report";
+import { buildSummary, CHECKOUT_BUTTON, deriveStages, explainFailure, GTM_MISSING, quoteFormEmailNote, summarizeWalk, type FinalActionLike, type WalkReport } from "@/utils/funnel-report";
 
 // The funnel-tester backend (funnel-tester/backend) runs as its own always-on server:
 // a walk drives a real browser for minutes, which does not fit a serverless function.
@@ -112,6 +112,8 @@ interface ViewportResult {
   results_buttons?: { ok: number; total: number; failed: string[]; payment: string } | null;
   // The walk reached an SMS-code screen - for the "SMS verified" stage
   otp_seen?: boolean;
+  // Whether submitting the quote form sent an email, from the site's own reply
+  email_note?: string | null;
   // Google Tag Manager was found on the quote form (on at least one step - a single
   // step can miss it while the page is busy); false = the site has no GTM
   gtm_found?: boolean | null;
@@ -268,6 +270,7 @@ async function readViewportResult(
         }
         result.steps = Array.isArray(report.steps) ? report.steps.length : null;
         // An "_otp" screenshot is taken on every SMS-code screen the walk handled
+        result.email_note = quoteFormEmailNote(report);
         result.otp_seen = Array.isArray(report.steps) && report.steps.some((s: any) => /_otp\.png$/.test(s?.screenshot ?? ""));
         result.tracking_ok = !!(report.gtmPresentThroughout || report.gtagPresentThroughout);
         result.gtm_found = Array.isArray(report.steps) && report.steps.length > 0
