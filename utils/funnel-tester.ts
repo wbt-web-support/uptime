@@ -534,6 +534,8 @@ interface UiViewportResult {
   // The page whose quote buttons were checked: the homepage, or - when it has none -
   // the funnel's service page (e.g. /battery-storage/)
   landing_url?: string | null;
+  // A service page checked as well, when none of the homepage's buttons led to the funnel
+  also_checked_url?: string | null;
   error: string | null;
   report_id: string | null;
 }
@@ -624,6 +626,7 @@ async function readUiResult(
     cta,
     grammar_issues: grammarIssues,
     landing_url: run.landingUrl ?? null,
+    also_checked_url: run.alsoCheckedUrl ?? null,
     error: null,
     report_id: await saveReport(supabase, funnelId, "ui", viewport, status, report),
   };

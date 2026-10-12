@@ -40,8 +40,6 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# funnel-tester/backend is the test runner this app calls over HTTP; its own
-# .gitignore keeps out its secrets, saved reports, screenshots and SMS logs.
-# The old standalone frontend is replaced by /funnel-test here.
-funnel-tester/frontend/
-funnel-tester/.claude/
+# funnel-tester is the test runner this app calls over HTTP. It's kept locally
+# for reference and running, and is never committed to this repo.
+funnel-tester/

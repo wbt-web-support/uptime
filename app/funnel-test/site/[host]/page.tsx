@@ -84,6 +84,8 @@ interface UiResult {
   grammar_issues?: { found: string; suggestion: string; reason: string; status?: "fix" | "fixed" }[] | null;
   // Where the quote buttons were checked: the homepage, or a service page when it had none
   landing_url?: string | null;
+  // Checked as well as the homepage, when none of the homepage's buttons led to the funnel
+  also_checked_url?: string | null;
   error: string | null;
   report_id: string | null;
 }
@@ -385,6 +387,18 @@ export default function SiteReportPage() {
             // The homepage had none, so the funnel's service page was checked instead
             const checked = uiSource?.ui_results?.desktop?.landing_url ?? uiSource?.ui_results?.mobile?.landing_url;
             const path = checked ? new URL(checked).pathname : "/";
+            const also = uiSource?.ui_results?.desktop?.also_checked_url ?? uiSource?.ui_results?.mobile?.also_checked_url;
+            if (also) {
+              return (
+                <>
+                  {" "}The buttons on{" "}
+                  <a href={also} target="_blank" rel="noopener noreferrer" className="font-medium text-foreground hover:text-brand">
+                    {new URL(also).pathname}
+                  </a>
+                  , the landing page that leads to this funnel, were checked too.
+                </>
+              );
+            }
             return path.replace(/\/+$/, "") !== "" ? (
               <>
                 {" "}This website has no quote buttons on its homepage, so they were checked on{" "}
