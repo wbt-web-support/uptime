@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/utils/supabase/server";
 import { sendFunnelAlert } from "@/utils/notifications";
-import { buildSummary, CHECKOUT_BUTTON, deriveStages, explainFailure, GTM_MISSING, quoteFormEmailNote, summarizeWalk, type FinalActionLike, type WalkReport } from "@/utils/funnel-report";
+import { buildSummary, CHECKOUT_BUTTON, deriveStages, explainFailure, quoteFormEmailNote, summarizeWalk, type FinalActionLike, type WalkReport } from "@/utils/funnel-report";
 
 // The funnel-tester backend (funnel-tester/backend) runs as its own always-on server:
 // a walk drives a real browser for minutes, which does not fit a serverless function.
@@ -340,14 +340,12 @@ export async function syncFunnelTest(
     const all = tested.map(v => results[v]!);
     if (all.length === 0) all.push({ status: "error", failure: "No device was tested", steps: null, tracking_ok: null, report_id: null });
 
-    // Overall result: passed only when both devices passed and the site has GTM
-    const gtmMissing = tested.filter(v => results[v]!.gtm_found === false);
-    const walked = all.some(r => r.status === "failed") ? "failed" : all.some(r => r.status === "error") ? "error" : "passed";
-    const overall = walked === "passed" && gtmMissing.length > 0 ? "failed" : walked;
+    // Overall result: passed only when both devices passed. A missing Google Tag
+    // Manager doesn't change it - it's shown in the website report only
+    const overall = all.some(r => r.status === "failed") ? "failed" : all.some(r => r.status === "error") ? "error" : "passed";
     const failures = tested
       .filter(v => results[v]!.failure)
       .map(v => `${deviceLabel(v)}: ${results[v]!.failure}`);
-    for (const v of gtmMissing) failures.push(`${deviceLabel(v)}: ${GTM_MISSING}`);
 
     update = {
       test_status: overall,
@@ -408,7 +406,8 @@ async function saveHistory(supabase: SupabaseClient, funnel: any) {
     const r = results[v];
     if (!r) continue;
     const stages = deriveStages(r);
-    const failed = r.status !== "passed" || Object.values(stages).includes("failed") || r.gtm_found === false;
+    // (A missing Google Tag Manager is report-only - it doesn't make a test fail)
+    const failed = r.status !== "passed" || Object.values(stages).includes("failed");
     if (failed && !reason) {
       const b = r.results_buttons;
       reason =
@@ -416,9 +415,7 @@ async function saveHistory(supabase: SupabaseClient, funnel: any) {
           ? explainFailure(r.failure, r.site_problem)?.title ?? r.failure ?? "Failed"
           : b && b.ok < b.total
             ? `Thank-you page button not working: ${b.failed.join(", ")}`
-            : r.gtm_found === false
-              ? GTM_MISSING
-              : "A stage failed";
+            : "A stage failed";
       reason = `${deviceLabel(v)}: ${reason}`;
     }
     anyFailed ||= failed;

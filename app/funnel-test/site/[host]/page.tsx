@@ -315,7 +315,8 @@ export default function SiteReportPage() {
   const anyStageFailed = (f: Funnel) =>
     DEVICES.some(d => {
       const r = f.test_results?.[d];
-      return !!r && (Object.values(deriveStages(r)).includes("failed") || gtmMissing(r));
+      // (A missing Google Tag Manager is shown below each device, not counted here)
+      return !!r && Object.values(deriveStages(r)).includes("failed");
     });
   const failing = tested.filter(f => f.test_status === "failed" || f.test_status === "error" || (f.test_status === "passed" && anyStageFailed(f))).length;
   const passing = tested.filter(f => f.test_status === "passed" && !anyStageFailed(f)).length;

@@ -9,7 +9,7 @@ import {
   deriveProgress,
   deriveStages,
   explainFailure,
-  GTM_MISSING,
+
   gtmMissing,
   STAGES,
   type FunnelStages,
@@ -1099,6 +1099,58 @@ export default function FunnelTestPage() {
     stopTestAllRef.current = true;
     setStopRequested(true);
     if (bulkCurrentRef.current) stopTest(bulkCurrentRef.current, false);
+    // Stopping from the toolbar also empties the queue of tests waiting their turn
+    runQueueRef.current = [];
+    setQueuedKeys([]);
+  };
+
+  // ---- One test at a time: every Run test / Test all joins a queue ----------
+  // Two websites tested at once share the two SMS numbers, so one test could read
+  // the other's code. Tests started from this page wait their turn and run in the
+  // order they were asked for. Keys: "funnel:<id>", "site:<label>" or "all".
+  type QueuedRun = { key: string; label: string; run: () => Promise<void> };
+  const runQueueRef = useRef<QueuedRun[]>([]);
+  const queueBusyRef = useRef(false);
+  const activeRunKeyRef = useRef<string | null>(null);
+  const [queuedKeys, setQueuedKeys] = useState<string[]>([]);
+
+  const processRunQueue = async () => {
+    queueBusyRef.current = true;
+    for (let next = runQueueRef.current.shift(); next; next = runQueueRef.current.shift()) {
+      setQueuedKeys(runQueueRef.current.map(q => q.key));
+      activeRunKeyRef.current = next.key;
+      try {
+        await next.run();
+      } catch (err: any) {
+        setError(err?.message ?? String(err));
+      }
+    }
+    activeRunKeyRef.current = null;
+    queueBusyRef.current = false;
+    setQueuedKeys([]);
+  };
+
+  const enqueueRun = (key: string, label: string, run: () => Promise<void>) => {
+    if (activeRunKeyRef.current === key || runQueueRef.current.some(q => q.key === key)) return;
+    runQueueRef.current.push({ key, label, run });
+    setQueuedKeys(runQueueRef.current.map(q => q.key));
+    if (queueBusyRef.current) {
+      setSuccess(`"${label}" is queued (${runQueueRef.current.length} in line) - it starts as soon as the test before it finishes`);
+    } else {
+      void processRunQueue();
+    }
+  };
+
+  const unqueueRun = (key: string) => {
+    runQueueRef.current = runQueueRef.current.filter(q => q.key !== key);
+    setQueuedKeys(runQueueRef.current.map(q => q.key));
+  };
+
+  // A website's place in the queue (1 = next), or 0 when it isn't waiting
+  const queuePlace = (g: { label: string }, toTest: { id: string }[]) => {
+    const keys = new Set([`site:${g.label}`, ...toTest.map(f => `funnel:${f.id}`)]);
+    const i = queuedKeys.findIndex(k => keys.has(k));
+    return i + 1;
   };
 
   const leadCount = DEVICES_FOR_CHOICE[deviceChoice].length;
@@ -1120,9 +1172,11 @@ export default function FunnelTestPage() {
     if (!window.confirm(ask + smsWarningText)) return;
     setError("");
     setSuccess("");
-    // Open the row so the live progress is in view
-    setExpanded(prev => new Set(prev).add(funnel.id));
-    runTest(funnel, true, left > 0);
+    enqueueRun(`funnel:${funnel.id}`, funnel.name, async () => {
+      // Open the row so the live progress is in view
+      setExpanded(prev => new Set(prev).add(funnel.id).add(`site:${hostOf(funnel)}`));
+      await runTest(funnel, true, left > 0);
+    });
   };
 
   // Test funnels strictly one after another: one site's (from its row) or every
@@ -1148,6 +1202,11 @@ export default function FunnelTestPage() {
 
     setError("");
     setSuccess("");
+    enqueueRun(siteLabel ? `site:${siteLabel}` : "all", siteLabel ?? `${what} (Test all)`, () => runList(list, includeRecent, avgMs));
+  };
+
+  // The tests themselves for testAll, once it's this list's turn in the queue
+  const runList = async (list: Funnel[], includeRecent: boolean, avgMs: number | null) => {
     stopTestAllRef.current = false;
     setStopRequested(false);
     let passed = 0;
@@ -1356,7 +1415,8 @@ export default function FunnelTestPage() {
               <Button
                 size="sm"
                 variant="outline"
-                disabled={!!bulkProgress}
+                disabled={queuedKeys.includes(`funnel:${funnel.id}`)}
+                title={queuedKeys.includes(`funnel:${funnel.id}`) ? "Already in the queue" : undefined}
                 onClick={e => {
                   e.stopPropagation();
                   testOne(funnel);
@@ -1557,8 +1617,7 @@ export default function FunnelTestPage() {
     if (base === "passed") {
       const stages = funnelStages(f);
       if (stages && Object.values(stages).includes("failed")) return "failed";
-      // ...nor one whose site has no Google Tag Manager
-      if (viewDevices.some(d => gtmMissing(deviceResult(f, d)))) return "failed";
+      // (A missing Google Tag Manager doesn't count - it's in the website report)
     }
     return base;
   };
@@ -1588,8 +1647,6 @@ export default function FunnelTestPage() {
         return `${device === "desktop" ? "Desktop" : "Mobile"}: thank-you page button${b.failed.length === 1 ? "" : "s"} not working: ${b.failed.join(", ")}`;
       }
     }
-    // Everything worked, but the site has no Google Tag Manager
-    if (viewDevices.some(d => gtmMissing(deviceResult(f, d)))) return GTM_MISSING;
     return null;
   };
 
@@ -1804,14 +1861,37 @@ export default function FunnelTestPage() {
             >
               <Square className="h-3.5 w-3.5" />
             </Button>
+          ) : queuePlace(g, toTest) ? (
+            // Waiting its turn: shows its place in line; clicking takes it out
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 gap-1 px-2 text-xs text-amber-700 dark:text-amber-400"
+              onClick={() => {
+                unqueueRun(`site:${g.label}`);
+                toTest.forEach(f => unqueueRun(`funnel:${f.id}`));
+              }}
+              title="Queued - starts when the tests before it finish. Click to take it out of the queue."
+              aria-label={`Queued, number ${queuePlace(g, toTest)} in line - take ${g.label} out of the queue`}
+            >
+              <Clock className="h-3.5 w-3.5" /> #{queuePlace(g, toTest)}
+            </Button>
           ) : (
             <Button
               size="icon"
               variant="outline"
               className="h-8 w-8"
-              disabled={!!bulkProgress || total === 0}
+              disabled={total === 0}
               onClick={() => (total === 1 ? testOne(toTest[0]) : testAll(toTest, g.label, true))}
-              title={total === 0 ? "All funnels are switched off" : single ? "Run test: this funnel, starting from the homepage" : "Run test: every funnel on this website, one by one"}
+              title={
+                total === 0
+                  ? "All funnels are switched off"
+                  : queuedKeys.length > 0 || bulkProgress
+                    ? "Run test - joins the queue and starts when the current test finishes"
+                    : single
+                      ? "Run test: this funnel, starting from the homepage"
+                      : "Run test: every funnel on this website, one by one"
+              }
               aria-label={`Run test on ${g.label}`}
             >
               <RefreshCw className="h-4 w-4" />
