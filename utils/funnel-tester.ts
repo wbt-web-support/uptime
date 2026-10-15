@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/utils/supabase/server";
 import { sendFunnelAlert } from "@/utils/notifications";
-import { buildSummary, CHECKOUT_BUTTON, deriveStages, explainFailure, quoteFormEmailNote, summarizeWalk, type FinalActionLike, type WalkReport } from "@/utils/funnel-report";
+import { buildSummary, CHECKOUT_BUTTON, deriveStages, explainFailure, quoteFormEmailNote, resultsButtonNote, summarizeWalk, type FinalActionLike, type ResultsButton, type WalkReport } from "@/utils/funnel-report";
 
 // The funnel-tester backend (funnel-tester/backend) runs as its own always-on server:
 // a walk drives a real browser for minutes, which does not fit a serverless function.
@@ -109,7 +109,8 @@ interface ViewportResult {
   report_id: string | null;
   // Results-page buttons (Save quote, Checkout...) when they were tested: how many
   // worked, which didn't, and whether a (test) card payment went through
-  results_buttons?: { ok: number; total: number; failed: string[]; payment: string } | null;
+  // (list: every button with what happened - from tests run after it was added)
+  results_buttons?: { ok: number; total: number; failed: string[]; payment: string; list?: ResultsButton[] } | null;
   // The walk reached an SMS-code screen - for the "SMS verified" stage
   otp_seen?: boolean;
   // Whether submitting the quote form sent an email, from the site's own reply
@@ -266,6 +267,7 @@ async function readViewportResult(
             total: buttons.length,
             failed: buttons.filter(b => !worked(b)).map(b => b.label).slice(0, 6),
             payment,
+            list: buttons.slice(0, 30).map(b => ({ label: b.label, ok: worked(b), note: resultsButtonNote(b, worked(b)) })),
           };
         }
         result.steps = Array.isArray(report.steps) ? report.steps.length : null;

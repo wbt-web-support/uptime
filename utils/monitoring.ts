@@ -264,18 +264,37 @@ function extractMainDomain(domain: string): string {
   return parts.slice(-2).join(".");
 }
 
+// The registry's own RDAP server for the most common domain endings; anything else goes
+// through rdap.org, which forwards to the right registry. Asking the registry
+// directly spreads a bulk "Check Selected" over several servers - rdap.org alone
+// answered 429 (too many requests) to about half of 200 domains checked at once.
+const REGISTRY_RDAP: Array<[RegExp, string]> = [
+  [/\.uk$/i, "https://rdap.nominet.uk/uk/domain/"],
+  [/\.com$/i, "https://rdap.verisign.com/com/v1/domain/"],
+  [/\.net$/i, "https://rdap.verisign.com/net/v1/domain/"],
+];
+const RDAP_RETRIES = 3;
+
 // The domain's expiry date and registrar from RDAP - the free, official successor
-// to WHOIS (rdap.org forwards to the right registry: Verisign for .com, Nominet for
-// .uk...). No key and no monthly limit, so it's the fallback when the APILayer WHOIS
+// to WHOIS. No key and no monthly limit, so it's the fallback when the APILayer WHOIS
 // plan's quota runs out ("You have exceeded your daily/monthly API rate limit").
 async function lookupExpiryViaRdap(mainDomain: string): Promise<{ expiryDate: Date; registrar: string }> {
-  const response = await fetch(`https://rdap.org/domain/${encodeURIComponent(mainDomain)}`, {
-    // rdap.org answers 403 to requests without a User-Agent (Node's fetch sends none)
-    headers: { Accept: "application/rdap+json", "User-Agent": "UptimeMonitor/1.0 (domain expiry check)" },
-    cache: "no-store",
-    redirect: "follow",
-    signal: AbortSignal.timeout(20000),
-  });
+  const base = REGISTRY_RDAP.find(([tld]) => tld.test(mainDomain))?.[1] ?? "https://rdap.org/domain/";
+  let response: Response;
+  for (let attempt = 0; ; attempt++) {
+    response = await fetch(`${base}${encodeURIComponent(mainDomain)}`, {
+      // rdap.org answers 403 to requests without a User-Agent (Node's fetch sends none)
+      headers: { Accept: "application/rdap+json", "User-Agent": "UptimeMonitor/1.0 (domain expiry check)" },
+      cache: "no-store",
+      redirect: "follow",
+      signal: AbortSignal.timeout(20000),
+    });
+    // Too many requests: wait (as long as the server asks, up to 15s) and try again
+    if (response.status !== 429 || attempt >= RDAP_RETRIES) break;
+    const retryAfter = Number(response.headers.get("retry-after"));
+    const waitMs = Math.min(retryAfter > 0 ? retryAfter * 1000 : 2000 * 2 ** attempt, 15000);
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+  }
   if (!response.ok) {
     throw new Error(response.status === 404 ? "the domain isn't registered (RDAP has no record of it)" : `RDAP lookup failed (status ${response.status})`);
   }

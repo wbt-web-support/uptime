@@ -27,7 +27,7 @@ interface DeviceResult {
   tracking_ok: boolean | null;
   report_id?: string | null;
   site_problem?: string | null;
-  results_buttons?: { ok: number; total: number; failed: string[]; payment: string } | null;
+  results_buttons?: { ok: number; total: number; failed: string[]; payment: string; list?: { label: string; ok: boolean; note: string }[] } | null;
   otp_seen?: boolean;
   email_note?: string | null;
   gtm_found?: boolean | null;
@@ -328,7 +328,7 @@ export default function SiteReportPage() {
       ? { text: "Testing now…", cls: "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300" }
       : f.test_status === "passed" && !anyStageFailed(f)
         ? { text: "Working", cls: "bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300" }
-        : f.test_status === "failed" || f.test_status === "error"
+        : f.test_status === "failed" || f.test_status === "error" || (f.test_status === "passed" && anyStageFailed(f))
           ? { text: "Not working", cls: "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300" }
           : { text: "Not tested yet", cls: "bg-gray-100 text-gray-800 dark:bg-muted dark:text-muted-foreground" };
 
@@ -649,6 +649,15 @@ export default function SiteReportPage() {
                                         {buttons.failed.length > 0 && ` · need a look: ${buttons.failed.join(", ")}`}
                                         {buttons.payment && buttons.payment !== "Not recorded" && buttons.payment !== "No checkout" && ` · payment ${buttons.payment.toLowerCase()}`}
                                       </p>
+                                    )}
+                                    {buttons?.list && buttons.list.length > 0 && (
+                                      <ul className="space-y-0.5 text-xs">
+                                        {buttons.list.map((b, i) => (
+                                          <li key={i} className={b.ok ? "text-muted-foreground" : "text-amber-700 dark:text-amber-400"}>
+                                            {b.ok ? "✅" : "⚠️"} <span className="font-medium">{b.label}</span>: {b.note}
+                                          </li>
+                                        ))}
+                                      </ul>
                                     )}
                                   </div>
                                 )}

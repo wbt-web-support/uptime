@@ -98,7 +98,9 @@ export default function AdminPanel() {
   // A failed check means the check itself errored (e.g. WHOIS timed out), not that the
   // site is down - a down site is a successful uptime check with status false.
   const CHECK_NAMES = ['Uptime', 'SSL', 'WHOIS', 'IP'] as const;
-  const runDomainChecks = async (domain: { id: string; uptime_url: string; domain_name: string }) => {
+  // inBatch: part of "Check Selected" / "Check All" - an expiry date looked up in the
+  // last 7 days is kept rather than looked up again (a single check always looks it up)
+  const runDomainChecks = async (domain: { id: string; uptime_url: string; domain_name: string }, inBatch = false) => {
     const post = (path: string, body: object) =>
       fetch(path, {
         method: 'POST',
@@ -109,7 +111,7 @@ export default function AdminPanel() {
     const results = await Promise.allSettled([
       post('/api/check/uptime', { domainId: domain.id, url: domain.uptime_url }),
       post('/api/check/ssl', { domainId: domain.id, domain: domain.domain_name }),
-      post('/api/check/whois', { domainId: domain.id, domain: domain.domain_name }),
+      post('/api/check/whois', { domainId: domain.id, domain: domain.domain_name, reuseRecent: inBatch }),
       post('/api/check/ip', { domainId: domain.id, domain: domain.domain_name })
     ]);
     return CHECK_NAMES.filter((_, i) => {
@@ -132,7 +134,7 @@ export default function AdminPanel() {
       while (next < list.length) {
         const domain = list[next++];
         try {
-          const failed = await runDomainChecks(domain);
+          const failed = await runDomainChecks(domain, true);
           if (failed.length === 0) successes++;
           else failures++;
           failed.forEach(name => { failedByCheck[name] = (failedByCheck[name] || 0) + 1; });

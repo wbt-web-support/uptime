@@ -25,6 +25,28 @@ export interface FinalActionLike {
   nestedActions?: FinalActionLike[];
 }
 
+// One results-page button for the funnel row: its name, whether it worked, and
+// what happened in a few plain words
+export interface ResultsButton {
+  label: string;
+  ok: boolean;
+  note: string;
+}
+
+export function resultsButtonNote(b: FinalActionLike, worked: boolean): string {
+  if (worked) {
+    if (/\/(checkout|payment)/i.test(b.resultingUrl) || CHECKOUT_BUTTON.test(b.label)) return "opened checkout";
+    return "opened";
+  }
+  const problem = `${b.error ?? ""} ${b.warning ?? ""}`;
+  if (/never actually completed|form wasn't sent/i.test(problem)) return "opened, but its form wasn't sent";
+  if (/nothing opened|didn't change at all|no change/i.test(problem)) return "clicked, but nothing happened";
+  if (/no visible element|not found|timed? ?out|could not navigate back/i.test(problem)) return "couldn't be clicked";
+  if (/error page|404|answers [45]\d\d/i.test(problem)) return "opens an error page";
+  const first = problem.trim().split(/(?<=[.!?])\s/)[0] ?? "";
+  return first.length > 90 ? `${first.slice(0, 87)}…` : first || "needs a look";
+}
+
 // A short note on whether submitting the QUOTE FORM sent an email, from the site's
 // own reply - e.g. {"success":true,"message":"Data Saved Successfully & Both Emails
 // Sent Successfully!"}. The first such reply in the walk is the quote form's (the

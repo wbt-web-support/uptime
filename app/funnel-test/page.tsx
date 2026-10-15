@@ -73,7 +73,7 @@ interface Funnel {
     tracking_ok: boolean | null;
     report_id?: string | null;
     site_problem?: string | null;
-    results_buttons?: { ok: number; total: number; failed: string[]; payment: string } | null;
+    results_buttons?: { ok: number; total: number; failed: string[]; payment: string; list?: { label: string; ok: boolean; note: string }[] } | null;
     otp_seen?: boolean;
     gtm_found?: boolean | null;
   }> | null;
@@ -527,8 +527,18 @@ function DeviceDetail({ result, ui, title, icon: Icon, testing, live, uiRunning,
                   {result.results_buttons.ok} of {result.results_buttons.total} worked
                 </span>
               </div>
-              {result.results_buttons.failed.length > 0 && (
-                <div className="mt-0.5 text-amber-700 dark:text-amber-400">Need a look: {result.results_buttons.failed.join(", ")}</div>
+              {result.results_buttons.list && result.results_buttons.list.length > 0 ? (
+                <ul className="mt-1 space-y-0.5">
+                  {result.results_buttons.list.map((b, i) => (
+                    <li key={i} className={b.ok ? "text-muted-foreground" : "text-amber-700 dark:text-amber-400"}>
+                      {b.ok ? "✅" : "⚠️"} <span className="font-medium">{b.label}</span>: {b.note}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                result.results_buttons.failed.length > 0 && (
+                  <div className="mt-0.5 text-amber-700 dark:text-amber-400">Need a look: {result.results_buttons.failed.join(", ")}</div>
+                )
               )}
               <div className="mt-0.5 text-muted-foreground">Checkout payment: {result.results_buttons.payment}</div>
             </div>
