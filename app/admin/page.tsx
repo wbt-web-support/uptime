@@ -5,7 +5,12 @@ import { createClient } from "@/utils/supabase/client";
 import { signOutAction } from "@/app/actions";
 import StatusCard from "@/components/StatusCard";
 import DomainForm from "@/components/DomainForm";
-import DashboardHeader from "@/components/DashboardHeader";
+import dynamic from "next/dynamic";
+// Drawn in the browser only: its Sort / Status / Category menus get automatic IDs
+// that came out different on the server and in the browser ("A tree hydrated but
+// some attributes ... didn't match": id="radix-_R_..."). The page's data loads in
+// the browser anyway, so nothing is lost by not drawing the bar on the server.
+const DashboardHeader = dynamic(() => import("@/components/DashboardHeader"), { ssr: false });
 import StatsOverview from "@/components/StatsOverview";
 import DomainActions from "@/components/DomainActions";
 import { Skeleton } from "@/components/ui/skeleton";

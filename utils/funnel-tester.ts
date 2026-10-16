@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/utils/supabase/server";
 import { sendFunnelAlert } from "@/utils/notifications";
-import { buildSummary, CHECKOUT_BUTTON, deriveStages, explainFailure, quoteFormEmailNote, resultsButtonNote, summarizeWalk, type FinalActionLike, type ResultsButton, type WalkReport } from "@/utils/funnel-report";
+import { buildSummary, deriveStages, uncountedButton, explainFailure, quoteFormEmailNote, resultsButtonNote, resultsButtonWorked, summarizeWalk, type FinalActionLike, type ResultsButton, type WalkReport } from "@/utils/funnel-report";
 
 // The funnel-tester backend (funnel-tester/backend) runs as its own always-on server:
 // a walk drives a real browser for minutes, which does not fit a serverless function.
@@ -110,7 +110,7 @@ interface ViewportResult {
   // Results-page buttons (Save quote, Checkout...) when they were tested: how many
   // worked, which didn't, and whether a (test) card payment went through
   // (list: every button with what happened - from tests run after it was added)
-  results_buttons?: { ok: number; total: number; failed: string[]; payment: string; list?: ResultsButton[] } | null;
+  results_buttons?: { ok: number; total: number; failed: string[]; payment: string; payment_note?: string | null; list?: ResultsButton[] } | null;
   // The walk reached an SMS-code screen - for the "SMS verified" stage
   otp_seen?: boolean;
   // Whether submitting the quote form sent an email, from the site's own reply
@@ -252,12 +252,15 @@ async function readViewportResult(
         result.failure = report.failure || null;
         result.site_problem = summarizeWalk(report).siteProblem ?? null;
         // Only the buttons on the results page itself count - not the steps inside
-        // them (e.g. "Add" / "Next" within checkout). Checkout counts as working
-        // when its test payment went through, whatever happened on the way.
-        const buttons: FinalActionLike[] = Array.isArray(report.finalActions) ? report.finalActions : [];
-        const payment = buildSummary(report).find(s => s.title === "Checkout payment")?.value ?? "No checkout";
-        const worked = (b: FinalActionLike) =>
-          (CHECKOUT_BUTTON.test(b.label) && payment === "Paid (test)") || (!b.error && !b.warning);
+        // them (e.g. "Add" / "Next" within checkout)
+        // Payment links ("Make A Payment" to a live Stripe page - a test never pays)
+        // and phone / email links don't count either way
+        const buttons: FinalActionLike[] = (Array.isArray(report.finalActions) ? report.finalActions : []).filter(
+          (b: FinalActionLike) => !uncountedButton(b)
+        );
+        const paymentItem = buildSummary(report).find(s => s.title === "Checkout payment");
+        const payment = paymentItem?.value ?? "No checkout";
+        const worked = (b: FinalActionLike) => resultsButtonWorked(b, payment);
         if (buttons.length === 0 && result.status === "passed") {
           // Results page had none of these buttons - nothing to test, not a failure
           result.results_buttons = { ok: 0, total: 0, failed: [], payment: "No checkout" };
@@ -267,6 +270,8 @@ async function readViewportResult(
             total: buttons.length,
             failed: buttons.filter(b => !worked(b)).map(b => b.label).slice(0, 6),
             payment,
+            // e.g. "Stripe is live - a test can't pay there..." (only when there's a checkout)
+            payment_note: payment !== "No checkout" ? paymentItem?.note ?? null : null,
             list: buttons.slice(0, 30).map(b => ({ label: b.label, ok: worked(b), note: resultsButtonNote(b, worked(b)) })),
           };
         }

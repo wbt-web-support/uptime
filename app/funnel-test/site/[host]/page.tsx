@@ -27,7 +27,7 @@ interface DeviceResult {
   tracking_ok: boolean | null;
   report_id?: string | null;
   site_problem?: string | null;
-  results_buttons?: { ok: number; total: number; failed: string[]; payment: string; list?: { label: string; ok: boolean; note: string }[] } | null;
+  results_buttons?: { ok: number; total: number; failed: string[]; payment: string; payment_note?: string | null; list?: { label: string; ok: boolean; note: string }[] } | null;
   otp_seen?: boolean;
   email_note?: string | null;
   gtm_found?: boolean | null;
@@ -647,7 +647,11 @@ export default function SiteReportPage() {
                                       <p className={`text-xs ${buttons.ok < buttons.total ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground"}`}>
                                         Save quote &amp; Checkout buttons: {buttons.ok} of {buttons.total} worked
                                         {buttons.failed.length > 0 && ` · need a look: ${buttons.failed.join(", ")}`}
-                                        {buttons.payment && buttons.payment !== "Not recorded" && buttons.payment !== "No checkout" && ` · payment ${buttons.payment.toLowerCase()}`}
+                                      </p>
+                                    )}
+                                    {buttons?.payment_note && (
+                                      <p className={`text-xs ${/test key/i.test(buttons.payment) ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground"}`}>
+                                        💳 Checkout: {buttons.payment_note}
                                       </p>
                                     )}
                                     {buttons?.list && buttons.list.length > 0 && (

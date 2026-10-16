@@ -14,8 +14,28 @@ export interface PlannedActionLike {
 // "Secure your online price", "Buy now", "Book & pay"...
 export const CHECKOUT_BUTTON = /checkout|check out|secure your (online )?price|buy now|book (&|and) pay|pay (now|deposit|online)|reserve|place (your )?order|lock in/i;
 
+// The checkout's payment, by the site's Stripe mode. Live: a test can't (and
+// mustn't) pay, so the payment isn't tested - checkout still counts as working.
+// Test key on a live site: real customers' cards are refused - worth fixing.
+export const STRIPE_LIVE_NOTE = "Stripe is live - a test can't pay there, so the payment isn't tested (checkout still counts as working)";
+export const STRIPE_TEST_KEY_NOTE = "Stripe uses a TEST key on the live site - real customers can't pay until the live key is put back";
+
+// A button or link that pays or opens a payment page ("Make A Payment", "Pay by
+// card", "Place order") - the tester never clicks these, so they're left out of the
+// results-page button counts (same words as the tester's PAYMENT_LABEL)
+export const PAYMENT_BUTTON =
+  /make (a )?payment|^\s*pay\b|\bpay (now|by card|online|deposit|invoice|in full|securely|with)|place (your )?order|complete (your )?(purchase|order|payment)|confirm (&|and) pay/i;
+
+// Results-page buttons that don't count either way: payment links (never clicked -
+// a test never pays) and phone / email links (they do nothing in a test browser;
+// seen on Cambridge Solar: "Call to discuss" was a link to 01223 912224)
+export function uncountedButton(b: { label: string; selector?: string }): boolean {
+  return PAYMENT_BUTTON.test(b.label) || /tel:|mailto:|(\d[\s()-]?){10,}/i.test(b.selector ?? "");
+}
+
 export interface FinalActionLike {
   label: string;
+  selector?: string;
   screenshot: string | null;
   resultingUrl: string;
   error: string | null;
@@ -33,9 +53,27 @@ export interface ResultsButton {
   note: string;
 }
 
+// Whether a results-page button worked. A checkout button ("Secure your online
+// price", "Buy now"...) works when it opens the checkout page - whether the test
+// payment there went through is shown on its own ("payment not paid"). Seen on ACF
+// Air Conditioning: checkout opened fine on desktop, but filling it in didn't
+// finish, and the button was reported as not working.
+export function resultsButtonWorked(b: FinalActionLike, payment?: string | null): boolean {
+  if (CHECKOUT_BUTTON.test(b.label)) {
+    if (payment === "Paid (test)") return true;
+    if (!b.error && /checkout|basket|cart|payment|order/i.test(b.resultingUrl)) return true;
+  }
+  // The button opened its pop-up / next step and only the form there wasn't sent -
+  // results-page buttons are only checked to open (tests from before that rule
+  // tried to fill those forms in; seen on CD-ME Battery: "Save Quote", "Next")
+  if (!b.error && b.warning && /follow-up form .* never actually completed/i.test(b.warning)) return true;
+  return !b.error && !b.warning;
+}
+
 export function resultsButtonNote(b: FinalActionLike, worked: boolean): string {
   if (worked) {
     if (/\/(checkout|payment)/i.test(b.resultingUrl) || CHECKOUT_BUTTON.test(b.label)) return "opened checkout";
+    if (b.warning && /follow-up form/i.test(b.warning)) return "opened (its form isn't sent by the test)";
     return "opened";
   }
   const problem = `${b.error ?? ""} ${b.warning ?? ""}`;
@@ -376,9 +414,12 @@ export function explainFailure(failure: string | null | undefined, siteProblem?:
     };
   }
 
-  // 0b. The site itself is broken in a way the walker could pin down exactly
+  // 0b. The site itself is broken in a way the walker could pin down exactly. A
+  // request the site's server refused (below) comes first: seen on ACF Boiler, a
+  // harmless script error fired on every click while the real reason was the
+  // postcode lookup answering 403 to every search
   const codeError = f.match(/\| Site code error: (.+)$/)?.[1];
-  if (codeError) {
+  if (codeError && !site) {
     const step = f.match(/step (\d+)/)?.[1];
     return {
       owner: "website",
@@ -412,12 +453,12 @@ export function explainFailure(failure: string | null | undefined, siteProblem?:
   }
 
   // 1. The site's own server failed - the most common real cause, so check first
-  if (/session has expired/i.test(site)) {
+  if (/session has expired|security token is out of date/i.test(site)) {
     return {
       owner: "website",
       title: "The site's address lookup is rejecting every search",
-      what: "When a postcode is searched, the website's own server answers \"Your session has expired\" (error 403), so no addresses appear and nobody - tester or customer - can get past the postcode step. This usually means the page is served from a cache holding an expired security code.",
-      fix: "In the site's WordPress: LiteSpeed Cache → Toolbox → Purge All. To stop it coming back, exclude the postcode lookup script from JS combine/cache, or keep the page cache under 12 hours.",
+      what: `When a postcode is searched, the website's own server refuses it (error 403${/session has expired/i.test(site) ? ', "Your session has expired"' : ', answer "-1"'}), so no addresses appear and nobody - tester or customer - can get past the postcode step. This usually means the quote page is served from a cache holding an expired security code.`,
+      fix: "In the site's WordPress: LiteSpeed Cache → Toolbox → Purge All. To stop it coming back, exclude the quote page (and its postcode lookup script) from page caching, or keep the page cache under 12 hours.",
     };
   }
   if (/SQL syntax|SQLSTATE|mysql/i.test(site)) {
@@ -702,10 +743,16 @@ export function buildSummary(report: WalkReport): SummaryItem[] {
   const paymentConfirmed = (report.apiCalls ?? []).some(c => /^200 POST \S*api\.stripe\.com\/v1\/payment_intents\/\S+\/confirm/.test(c));
   // Sites rarely label it "checkout" - e.g. "Secure your online price"
   const hasCheckout = allButtons.some(b => CHECKOUT_BUTTON.test(b.label));
+  // The site's Stripe mode, from its publishable key (pk_live_ / pk_test_)
+  const stripeMode = (report.apiCalls ?? []).map(c => c.match(/^\[payment-key\] Found a Stripe publishable key in (LIVE|TEST) mode/)?.[1]).find(Boolean);
   const payment: SummaryItem = paymentConfirmed
     ? { title: "Checkout payment", value: "Paid (test)", note: "Stripe confirmed", tone: "good" }
     : hasCheckout
-      ? { title: "Checkout payment", value: "Not paid", note: "Checkout opened, no payment", tone: "warn" }
+      ? stripeMode === "LIVE"
+        ? { title: "Checkout payment", value: "Live Stripe", note: STRIPE_LIVE_NOTE, tone: "neutral" }
+        : stripeMode === "TEST"
+          ? { title: "Checkout payment", value: "Stripe test key", note: STRIPE_TEST_KEY_NOTE, tone: "warn" }
+          : { title: "Checkout payment", value: "Not paid", note: "Checkout opened - a test never pays on a live site", tone: "neutral" }
       : { title: "Checkout payment", value: "No checkout", note: "Nothing to pay", tone: "neutral" };
 
   const form: SummaryItem = report.completed

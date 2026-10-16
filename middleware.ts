@@ -56,6 +56,11 @@ export async function middleware(request: NextRequest) {
   return response
 }
 
+// Every page (not API routes, Next.js files or images): getSession() above
+// refreshes the login, and when its refresh token is dead ("Invalid Refresh Token:
+// Refresh Token Not Found") Supabase clears the login cookie through setAll -
+// which only reaches the browser from here. Run on /admin and /protected only,
+// every other page kept the dead cookie and hit the same error on each load.
 export const config = {
-  matcher: ['/protected/:path*', '/admin/:path*'],
+  matcher: ['/((?!api|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)'],
 }

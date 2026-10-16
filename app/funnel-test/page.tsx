@@ -73,7 +73,7 @@ interface Funnel {
     tracking_ok: boolean | null;
     report_id?: string | null;
     site_problem?: string | null;
-    results_buttons?: { ok: number; total: number; failed: string[]; payment: string; list?: { label: string; ok: boolean; note: string }[] } | null;
+    results_buttons?: { ok: number; total: number; failed: string[]; payment: string; payment_note?: string | null; list?: { label: string; ok: boolean; note: string }[] } | null;
     otp_seen?: boolean;
     gtm_found?: boolean | null;
   }> | null;
@@ -540,7 +540,9 @@ function DeviceDetail({ result, ui, title, icon: Icon, testing, live, uiRunning,
                   <div className="mt-0.5 text-amber-700 dark:text-amber-400">Need a look: {result.results_buttons.failed.join(", ")}</div>
                 )
               )}
-              <div className="mt-0.5 text-muted-foreground">Checkout payment: {result.results_buttons.payment}</div>
+              <div className="mt-0.5 text-muted-foreground">
+                Checkout payment: {result.results_buttons.payment_note ?? result.results_buttons.payment}
+              </div>
             </div>
           )}
           <div className="mt-2">
@@ -2140,16 +2142,6 @@ export default function FunnelTestPage() {
             </Button>
           ) : (
             <>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => testAll()}
-                disabled={loading || filteredFunnels.length === 0}
-                title="Test every website shown, one by one"
-              >
-                <Play className="mr-1.5 h-3.5 w-3.5" />
-                Test all
-              </Button>
               <Button
                 size="sm"
                 onClick={testNextSites}
