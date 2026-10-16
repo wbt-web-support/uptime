@@ -268,10 +268,9 @@ export async function checkDomainExpiry(domainId: string, domain: string) {
       headers: {
         'apikey': apiKey,
       },
-      cache: 'no-store',
-      signal: AbortSignal.timeout(15000),
+      cache: 'no-store'
     });
-
+    
     if (!response.ok) {
       console.error(`WHOIS API Error: Status ${response.status}`);
       const responseText = await response.text();
