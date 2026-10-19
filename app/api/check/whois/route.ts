@@ -3,6 +3,8 @@ import { createClient } from "@/utils/supabase/server";
 import { checkDomainExpiry } from "@/utils/monitoring";
 import { sendAlert } from "@/utils/email";
 
+const WHOIS_REUSE_DAYS = 7;
+
 export async function POST(request: NextRequest) {
   try {
     // Authenticate the request
@@ -13,8 +15,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
     
-    // Get the domain info from the request body
-    const { domainId, domain } = await request.json();
+    // Get the domain info from the request body. reuseRecent (sent by "Check
+    // Selected") keeps an expiry date looked up in the last WHOIS_REUSE_DAYS
+    // instead of looking it up again - it rarely changes, and a bulk check of
+    // ~200 domains otherwise hits the lookup services' request limits
+    const { domainId, domain, reuseRecent } = await request.json();
     
     if (!domainId || !domain) {
       return NextResponse.json({ error: "Domain ID and domain name are required" }, { status: 400 });
@@ -28,6 +33,22 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Admin access required" }, { status: 403 });
     }
     
+    if (reuseRecent) {
+      const since = new Date(Date.now() - WHOIS_REUSE_DAYS * 24 * 60 * 60 * 1000).toISOString();
+      const { data: recent } = await supabase
+        .from("domain_expiry")
+        .select("expiry_date, days_remaining, registrar, checked_at")
+        .eq("domain_id", domainId)
+        .gte("checked_at", since)
+        .not("expiry_date", "is", null)
+        .order("checked_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (recent) {
+        return NextResponse.json({ success: true, reused: true, ...recent });
+      }
+    }
+
     // Perform the domain expiry check
     const result = await checkDomainExpiry(domainId, domain);
     

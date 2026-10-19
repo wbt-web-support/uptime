@@ -246,23 +246,100 @@ function extractMainDomain(domain: string): string {
   return parts.slice(-2).join(".");
 }
 
-// Function to check domain expiry using Whois API
+// The registry's own RDAP server for the most common domain endings; anything else goes
+// through rdap.org, which forwards to the right registry. Asking the registry
+// directly spreads a bulk "Check Selected" over several servers - rdap.org alone
+// answered 429 (too many requests) to about half of 200 domains checked at once.
+const REGISTRY_RDAP: Array<[RegExp, string]> = [
+  [/\.uk$/i, "https://rdap.nominet.uk/uk/domain/"],
+  [/\.com$/i, "https://rdap.verisign.com/com/v1/domain/"],
+  [/\.net$/i, "https://rdap.verisign.com/net/v1/domain/"],
+];
+const RDAP_RETRIES = 3;
+
+// The domain's expiry date and registrar from RDAP - the free, official successor
+// to WHOIS. No key and no monthly limit, so it's the fallback when the APILayer WHOIS
+// plan's quota runs out ("You have exceeded your daily/monthly API rate limit").
+async function lookupExpiryViaRdap(mainDomain: string): Promise<{ expiryDate: Date; registrar: string }> {
+  const base = REGISTRY_RDAP.find(([tld]) => tld.test(mainDomain))?.[1] ?? "https://rdap.org/domain/";
+  let response: Response;
+  for (let attempt = 0; ; attempt++) {
+    response = await fetch(`${base}${encodeURIComponent(mainDomain)}`, {
+      // rdap.org answers 403 to requests without a User-Agent (Node's fetch sends none)
+      headers: { Accept: "application/rdap+json", "User-Agent": "UptimeMonitor/1.0 (domain expiry check)" },
+      cache: "no-store",
+      redirect: "follow",
+      signal: AbortSignal.timeout(20000),
+    });
+    // Too many requests: wait (as long as the server asks, up to 15s) and try again
+    if (response.status !== 429 || attempt >= RDAP_RETRIES) break;
+    const retryAfter = Number(response.headers.get("retry-after"));
+    const waitMs = Math.min(retryAfter > 0 ? retryAfter * 1000 : 2000 * 2 ** attempt, 15000);
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+  }
+  if (!response.ok) {
+    throw new Error(response.status === 404 ? "the domain isn't registered (RDAP has no record of it)" : `RDAP lookup failed (status ${response.status})`);
+  }
+  const data = await response.json();
+  const expiry = (data.events ?? []).find((e: any) => /expiration/i.test(e.eventAction ?? ""))?.eventDate;
+  const expiryDate = expiry ? new Date(expiry) : null;
+  if (!expiryDate || isNaN(expiryDate.getTime())) throw new Error("RDAP record has no expiry date");
+  const registrarEntity = (data.entities ?? []).find((e: any) => (e.roles ?? []).includes("registrar"));
+  const vcardName = registrarEntity?.vcardArray?.[1]?.find((f: any) => f[0] === "fn")?.[3];
+  return { expiryDate, registrar: vcardName || registrarEntity?.handle || "Unknown" };
+}
+
+// Function to check domain expiry: the APILayer WHOIS API, and RDAP when that fails
 export async function checkDomainExpiry(domainId: string, domain: string) {
   const supabase = await createClient();
-  
+  // Extract the main domain for WHOIS lookup
+  const mainDomain = extractMainDomain(domain);
+
   try {
-    // Extract the main domain for WHOIS lookup
-    const mainDomain = extractMainDomain(domain);
-    console.log(`Extracted main domain ${mainDomain} from ${domain} for WHOIS lookup`);
-    
+    const { expiryDate, registrar } = await lookupExpiryViaApiLayer(mainDomain).catch(async (apiLayerError: any) => {
+      console.warn(`WHOIS (APILayer) failed for ${mainDomain} - trying RDAP: ${apiLayerError.message}`);
+      try {
+        return await lookupExpiryViaRdap(mainDomain);
+      } catch (rdapError: any) {
+        // Both failed: a short message for the dashboard, not the raw API reply
+        const quota = apiLayerError.code === "WHOIS_QUOTA_EXCEEDED";
+        const error: any = new Error(
+          quota
+            ? `Couldn't get the expiry date: the WHOIS plan's limit is used up and the free RDAP lookup failed too (${rdapError.message}).`
+            : `Couldn't get the expiry date: ${rdapError.message}.`
+        );
+        if (quota) error.code = "WHOIS_QUOTA_EXCEEDED";
+        throw error;
+      }
+    });
+    const daysRemaining = calculateDaysRemaining(expiryDate);
+
+    // Save the result to Supabase
+    await supabase.from("domain_expiry").insert({
+      domain_id: domainId,
+      expiry_date: expiryDate.toISOString(),
+      days_remaining: daysRemaining,
+      registrar: registrar,
+    });
+
+    console.log(`Domain expiry check for ${mainDomain}: Expires in ${daysRemaining} days (${expiryDate.toISOString()})`);
+    return { expiryDate, daysRemaining, registrar };
+  } catch (error: any) {
+    console.error(`Error checking domain expiry for ${domain}:`, error.message);
+    throw error;
+  }
+}
+
+// The domain's expiry date and registrar from the APILayer WHOIS API (paid, metered)
+async function lookupExpiryViaApiLayer(mainDomain: string): Promise<{ expiryDate: Date; registrar: string }> {
     // Use the API Layer Whois API - try both environment variables
     const apiKey = process.env.API_LAYER_KEY || process.env.NEXT_PUBLIC_API_LAYER_KEY;
     if (!apiKey) {
       throw new Error("API_LAYER_KEY environment variable is not set");
     }
-    
+
     console.log(`Checking domain expiry for ${mainDomain} with API key: ${apiKey.substring(0, 3)}...`);
-    
+
     const response = await fetch(`https://api.apilayer.com/whois/query?domain=${mainDomain}`, {
       method: 'GET',
       headers: {
@@ -315,8 +392,6 @@ export async function checkDomainExpiry(domainId: string, domain: string) {
       throw new Error(`Invalid date format in WHOIS response: ${expiryDateStr}`);
     }
     
-    const daysRemaining = calculateDaysRemaining(expiryDate);
-    
     // Extract registrar information if available
     let registrar = "Unknown";
     if (data.result && typeof data.result === 'object' && data.result.registrar) {
@@ -324,22 +399,8 @@ export async function checkDomainExpiry(domainId: string, domain: string) {
     } else if (data.registrar) {
       registrar = data.registrar;
     }
-    
-    // Save the result to Supabase
-    await supabase.from("domain_expiry").insert({
-      domain_id: domainId,
-      expiry_date: expiryDate.toISOString(),
-      days_remaining: daysRemaining,
-      registrar: registrar,
-    });
-    
-    console.log(`Domain expiry check for ${mainDomain}: Expires in ${daysRemaining} days (${expiryDate.toISOString()})`);
-    return { expiryDate, daysRemaining, registrar };
-    
-  } catch (error: any) {
-    console.error(`Error checking domain expiry for ${domain}:`, error.message);
-    throw error;
-  }
+
+    return { expiryDate, registrar };
 }
 
 // Function to check domain IP records

@@ -117,11 +117,12 @@ export default function AdminPanel() {
             body: JSON.stringify({ domainId: domain.id, domain: domain.domain_name })
           });
 
-          // Check domain expiry
+          // Check domain expiry - an expiry date looked up in the last 7 days is kept
+          // rather than looked up again (checking ~200 domains hits the lookup limits)
           await fetch('/api/check/whois', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ domainId: domain.id, domain: domain.domain_name })
+            body: JSON.stringify({ domainId: domain.id, domain: domain.domain_name, reuseRecent: true })
           });
 
           // Check IP records
@@ -437,11 +438,12 @@ export default function AdminPanel() {
             body: JSON.stringify({ domainId: domain.id, domain: domain.domain_name })
           });
 
-          // Check domain expiry
+          // Check domain expiry - an expiry date looked up in the last 7 days is kept
+          // rather than looked up again (checking ~200 domains hits the lookup limits)
           await fetch('/api/check/whois', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ domainId: domain.id, domain: domain.domain_name })
+            body: JSON.stringify({ domainId: domain.id, domain: domain.domain_name, reuseRecent: true })
           });
 
           // Check IP records
