@@ -105,6 +105,8 @@ export async function sendFunnelAlert(options: {
   funnelUrl: string;
   reason: string | null;
   reportUrl: string;
+  // 'daily check': from the daily no-submit check rather than a full test
+  source?: 'test' | 'daily check';
 }): Promise<boolean> {
   const recipients = (process.env.FUNNEL_ALERT_EMAILS || process.env.ADMIN_EMAIL || '')
     .split(',')
@@ -113,18 +115,21 @@ export async function sendFunnelAlert(options: {
   if (!recipients.length || !process.env.SMTP_HOST) return false;
 
   const broken = options.kind === 'broken';
+  const daily = options.source === 'daily check';
   const escape = (s: string) => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
   const subject = broken
-    ? `Funnel not working: ${options.funnelName}`
-    : `Funnel working again: ${options.funnelName}`;
+    ? `${daily ? 'Funnel problem found' : 'Funnel not working'}: ${options.funnelName}`
+    : `${daily ? 'Funnel problem fixed' : 'Funnel working again'}: ${options.funnelName}`;
+  const brokenLine = daily ? "Today's daily check of this quote funnel found a problem (nothing was submitted)." : 'This quote funnel stopped working in its latest test.';
+  const fixedLine = daily ? "Today's daily check found no problems on this quote funnel any more." : 'This quote funnel works again - every stage passed in its latest test.';
   const text = broken
-    ? `The quote funnel "${options.funnelName}" (${options.funnelUrl}) stopped working in its latest test.\n\nWhy: ${options.reason ?? 'see the report'}\n\nFull report: ${options.reportUrl}`
-    : `The quote funnel "${options.funnelName}" (${options.funnelUrl}) works again - every stage passed in its latest test.\n\nReport: ${options.reportUrl}`;
+    ? `${brokenLine}\n\n"${options.funnelName}" (${options.funnelUrl})\n\nWhy: ${options.reason ?? 'see the report'}\n\nFull report: ${options.reportUrl}`
+    : `${fixedLine}\n\n"${options.funnelName}" (${options.funnelUrl})\n\nReport: ${options.reportUrl}`;
   const html = `
     <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 5px;">
       <h1 style="color: ${broken ? '#d32f2f' : '#2e7d32'}; margin-top: 0; font-size: 22px;">${escape(subject)}</h1>
       <p style="font-size: 15px; line-height: 1.5;">
-        ${broken ? 'This quote funnel stopped working in its latest test.' : 'This quote funnel works again - every stage passed in its latest test.'}
+        ${broken ? brokenLine : fixedLine}
       </p>
       <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
         <tr><td style="padding: 8px 0; border-bottom: 1px solid #e0e0e0; font-weight: bold; width: 110px;">Funnel</td><td style="padding: 8px 0; border-bottom: 1px solid #e0e0e0;">${escape(options.funnelName)}</td></tr>

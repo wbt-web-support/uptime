@@ -11,6 +11,10 @@
     {
       "path": "/api/cron/funnels",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/funnel-health",
+      "schedule": "*/5 * * * *"
     }
   ]
 }

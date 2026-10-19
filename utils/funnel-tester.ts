@@ -687,8 +687,9 @@ export async function syncUiCheck(
   return { funnel: updated };
 }
 
-// Talk to the backend, turning "not running" into a readable message
-export async function funnelTesterFetch(path: string, init?: RequestInit) {
+// Talk to the backend, turning "not running" into a readable message. timeoutMs: the
+// daily quick check answers in ~30s, everything else straight away
+export async function funnelTesterFetch(path: string, init?: RequestInit, timeoutMs = 15000) {
   const headers = new Headers(init?.headers);
   if (FUNNEL_TESTER_API_KEY) headers.set("Authorization", `Bearer ${FUNNEL_TESTER_API_KEY}`);
 
@@ -698,7 +699,7 @@ export async function funnelTesterFetch(path: string, init?: RequestInit) {
       ...init,
       headers,
       cache: "no-store",
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch {
     throw new Error(`Funnel tester backend is not reachable at ${FUNNEL_TESTER_URL}. Start it with "npm run dev" in funnel-tester/backend.`);

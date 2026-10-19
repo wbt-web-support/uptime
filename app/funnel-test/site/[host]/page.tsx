@@ -7,9 +7,10 @@ import { createClient } from "@/utils/supabase/client";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StageCell } from "@/components/FunnelStageMarks";
 import { FunnelReportView } from "@/components/FunnelReportView";
-import { AlertCircle, ArrowLeft, ChevronDown, ChevronUp, Clock, ExternalLink, Globe, Monitor, Smartphone, X } from "lucide-react";
+import { AlertCircle, ArrowLeft, ChevronDown, ChevronUp, Clock, ExternalLink, Globe, Monitor, RefreshCw, Smartphone, X } from "lucide-react";
 import { deriveStages, explainFailure, GTM_MISSING, gtmMissing, OWNER_LABEL, STAGES, type ProblemOwner } from "@/utils/funnel-report";
 import { isChooserFunnel } from "@/utils/funnel-discovery";
+import type { HealthResult } from "@/utils/funnel-health";
 
 // Everything about one website's funnel tests on one page: the landing page
 // "Get a quote" check, then every funnel's stages on desktop and mobile and why any
@@ -185,12 +186,44 @@ function InlineReport({ id, title, onClose }: { id: string; title: string; onClo
   );
 }
 
+// The latest daily no-submit check of a funnel: each check as a tick or a warning,
+// with what's wrong spelled out under it
+function HealthLine({ result }: { result: HealthResult | undefined }) {
+  if (!result) return null;
+  if ("error" in result) {
+    return <p className="border-b px-4 py-2 text-xs text-muted-foreground">Daily check couldn&apos;t run: {(result as { error: string }).error}</p>;
+  }
+  const shown = result.checks.filter(c => c.status !== "skipped");
+  const problems = shown.filter(c => c.status === "problem");
+  return (
+    <div className="border-b px-4 py-2 text-xs">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="font-medium text-foreground">Daily check</span>
+        <span className="text-muted-foreground">{shortDate(result.checked_at)} · nothing submitted</span>
+        {shown.map(c => (
+          <span key={c.key} className={c.status === "ok" ? "text-muted-foreground" : "font-medium text-amber-700 dark:text-amber-400"}>
+            {c.status === "ok" ? "✅" : "⚠️"} {c.label}
+          </span>
+        ))}
+      </div>
+      {problems.map(c => (
+        <p key={c.key} className="mt-1 text-amber-700 dark:text-amber-400">
+          <span className="font-medium">{c.label}:</span> {c.detail}
+        </p>
+      ))}
+    </div>
+  );
+}
+
 export default function SiteReportPage() {
   const params = useParams<{ host: string }>();
   const host = decodeURIComponent(params.host ?? "").toLowerCase();
   const supabase = useMemo(() => createClient(), []);
   const [funnels, setFunnels] = useState<Funnel[] | null>(null);
   const [history, setHistory] = useState<Record<string, HistoryEntry[]>>({});
+  // Latest daily no-submit check per funnel
+  const [health, setHealth] = useState<Record<string, HealthResult>>({});
+  const [checkingHealth, setCheckingHealth] = useState(false);
   const [clientName, setClientName] = useState<string | null>(null);
   const [error, setError] = useState("");
   // A switch that couldn't be saved (e.g. the test_enabled column is missing)
@@ -232,6 +265,29 @@ export default function SiteReportPage() {
     }
   };
 
+  // Run the daily no-submit check now on this website's quote funnels (nothing is
+  // filled in or sent), then show the results
+  const runHealthCheck = async () => {
+    const quotePages = (funnels ?? []).filter(f => f.test_enabled !== false && new URL(f.url).pathname.replace(/\/+$/, "") !== "");
+    if (quotePages.length === 0) return;
+    setCheckingHealth(true);
+    setSaveError("");
+    try {
+      const res = await fetch("/api/funnels/health-check", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ funnelIds: quotePages.map(f => f.id) }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || "The daily check couldn't run");
+      setHealth(prev => ({ ...prev, ...body.results }));
+    } catch (err: any) {
+      setSaveError(err.message);
+    } finally {
+      setCheckingHealth(false);
+    }
+  };
+
   useEffect(() => {
     (async () => {
       const { data, error: loadError } = await supabase
@@ -256,6 +312,16 @@ export default function SiteReportPage() {
         const byFunnel: Record<string, HistoryEntry[]> = {};
         for (const r of rows ?? []) (byFunnel[r.funnel_id] ??= []).push(r.report as HistoryEntry);
         setHistory(byFunnel);
+        const { data: healthRows } = await supabase
+          .from("funnel_reports")
+          .select("funnel_id, report")
+          .eq("kind", "health")
+          .in("funnel_id", site.map(f => f.id))
+          .order("created_at", { ascending: false })
+          .limit(site.length * 3);
+        const latest: Record<string, HealthResult> = {};
+        for (const r of healthRows ?? []) latest[r.funnel_id] ??= r.report as HealthResult;
+        setHealth(latest);
       }
       const domainId = site.find(f => f.domain_id)?.domain_id;
       if (domainId) {
@@ -366,7 +432,16 @@ export default function SiteReportPage() {
             )}
           </div>
         </div>
-        <div className="flex gap-3">
+        <div className="flex flex-wrap items-start gap-3">
+          <button
+            onClick={runHealthCheck}
+            disabled={checkingHealth}
+            title="Opens each quote page and checks it without filling in or sending anything: page, quote form, GTM, postcode lookup, Stripe key, phone links"
+            className="inline-flex h-9 items-center gap-1.5 self-center rounded-md border px-3 text-sm font-medium hover:bg-muted disabled:opacity-60"
+          >
+            <RefreshCw className={`h-4 w-4 ${checkingHealth ? "animate-spin" : ""}`} />
+            {checkingHealth ? "Checking… (about 30s per funnel)" : "Daily check now"}
+          </button>
           {[
             { label: "Working", value: passing, cls: "text-green-600 dark:text-green-400" },
             { label: "Not working", value: failing, cls: "text-red-600 dark:text-red-400" },
@@ -582,6 +657,7 @@ export default function SiteReportPage() {
                 </div>
 
                 <HistoryStrip entries={history[f.id] ?? []} />
+                <HealthLine result={health[f.id]} />
 
                 {f.test_status === "running" ? (
                   <p className="px-4 py-4 text-sm text-blue-700 dark:text-blue-300">Testing right now…</p>
