@@ -9,6 +9,7 @@ import StatsOverview from "@/components/StatsOverview";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AlertTriangle, Grid, List, Clock, Lock, Globe, Server, ExternalLink } from "lucide-react";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
+import { DOMAIN_CATEGORIES } from "@/utils/domain-categories";
 
 interface Domain {
   id: string;
@@ -147,13 +148,12 @@ export default function PublicDashboard() {
     return () => clearInterval(intervalId);
   }, []);
 
-  // Get all unique categories from domains. "Dominate" is not a category but a separate
-  // flag (is_dominate), listed here so it can be filtered on like one.
-  const hasDominate = domains.some(domain => domain.is_dominate);
-  const categories = ["all", ...(hasDominate ? [DOMINATE_FILTER] : []), ...Array.from(new Set(domains
-    .filter(domain => domain.category)
-    .map(domain => domain.category as string)
-  ))];
+  // Every category, plus any other one a website has. "Dominate" is not a category but a
+  // separate flag (is_dominate), listed here so it can be filtered on like one.
+  const categories = ["all", DOMINATE_FILTER, ...Array.from(new Set([
+    ...DOMAIN_CATEGORIES,
+    ...domains.filter(domain => domain.category).map(domain => domain.category as string),
+  ]))];
 
   // Filter and sort domains based on search query, status filter, and sort choice
   const filteredDomains = domains.filter(domain => {
@@ -206,10 +206,9 @@ export default function PublicDashboard() {
     domainExpiring: domains.filter(d => d.domain_expiry?.days_remaining !== undefined && d.domain_expiry.days_remaining <= 30).length
   };
 
-  // Calculate category counts
-  const categoryStats: Record<string, number> = {
-    all: domains.length
-  };
+  // Calculate category counts (0 for a category no website has)
+  const categoryStats: Record<string, number> = Object.fromEntries(categories.map(c => [c, 0]));
+  categoryStats.all = domains.length;
 
   domains.forEach(domain => {
     if (domain.category) {
