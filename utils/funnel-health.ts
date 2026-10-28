@@ -37,28 +37,47 @@ export async function runFunnelHealthCheck(
   supabase: SupabaseClient,
   funnel: { id: string; name: string; url: string }
 ): Promise<HealthResult> {
-  const res = await funnelTesterFetch(
-    "/quick-check",
-    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: funnel.url }) },
-    QUICK_CHECK_TIMEOUT_MS
-  );
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body?.error || `Daily check failed (status ${res.status})`);
-  const result = body as HealthResult;
+  let result: HealthResult;
+  try {
+    const res = await funnelTesterFetch(
+      "/quick-check",
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: funnel.url }) },
+      QUICK_CHECK_TIMEOUT_MS
+    );
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body?.error || `Daily check failed (status ${res.status})`);
+    result = body as HealthResult;
+  } catch (err: any) {
+    // Saved too, so the cron counts the funnel as checked and moves on instead of
+    // retrying the same site every 5 minutes
+    await supabase.from("funnel_reports").insert({
+      funnel_id: funnel.id,
+      kind: "health",
+      viewport: "both",
+      status: "error",
+      report: { url: funnel.url, checked_at: new Date().toISOString(), error: err.message },
+    });
+    throw err;
+  }
 
-  // The previous daily check - to tell whether this one found a new problem or a fix
+  // The previous daily check that ran - to tell whether this one found a new problem
+  // or a fix (a check that couldn't run says neither)
   const { data: previousRows } = await supabase
     .from("funnel_reports")
     .select("report")
     .eq("funnel_id", funnel.id)
     .eq("kind", "health")
+    .neq("status", "error")
     .order("created_at", { ascending: false })
     .limit(1);
   const previous = (previousRows?.[0]?.report as HealthResult | undefined) ?? null;
 
-  await supabase
+  // Not saved means the next run would compare against the same previous check and
+  // email the same problem again - so stop before emailing
+  const { error: insertError } = await supabase
     .from("funnel_reports")
     .insert({ funnel_id: funnel.id, kind: "health", viewport: "both", status: result.ok ? "ok" : "problem", report: result });
+  if (insertError) throw new Error(`Daily check result not saved: ${insertError.message}`);
 
   // Email when a problem shows up that wasn't there last time, or when the
   // problems are all gone - not again every day while nothing changes

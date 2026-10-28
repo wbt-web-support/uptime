@@ -15,7 +15,9 @@ import { runFunnelHealthCheck } from "@/utils/funnel-health";
 // CRON_SECRET is set).
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+// Above the 90s a quick check may take (utils/funnel-health.ts), so a slow site
+// isn't cut off before its result is saved
+export const maxDuration = 120;
 
 const CHECK_EVERY_HOURS = Number(process.env.FUNNEL_HEALTH_EVERY_HOURS || 20);
 const PER_RUN = Number(process.env.FUNNEL_HEALTH_PER_RUN || 2);

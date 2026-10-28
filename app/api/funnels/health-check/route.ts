@@ -20,7 +20,8 @@ export async function POST(request: NextRequest) {
     const { data: funnels, error: funnelsError } = await supabase
       .from("funnels")
       .select("id, name, url")
-      .in("id", funnelIds.slice(0, 20));
+      // 16 at ~30s each, two at a time, fits in maxDuration
+      .in("id", funnelIds.slice(0, 16));
     if (funnelsError) throw funnelsError;
 
     const results: Record<string, unknown> = {};
