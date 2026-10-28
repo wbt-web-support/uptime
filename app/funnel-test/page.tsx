@@ -1777,9 +1777,6 @@ export default function FunnelTestPage() {
             : state === "partial"
               ? { text: `${untested} not tested yet`, cls: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300" }
               : { text: "Not tested yet", cls: "bg-gray-100 text-gray-800 dark:bg-muted dark:text-muted-foreground" };
-    // The first failing funnel and why, so the row says what's wrong without opening it
-    const firstFailing = toTest.find(f => funnelState(f) === "failed");
-    const reason = firstFailing ? failureReason(firstFailing) : null;
     const liveMessage = running ? testMessages[running.id] : undefined;
     // The website's stages: a stage failed if it failed on any of its funnels
     const stages = combineStages(toTest.map(funnelStages).filter((s): s is FunnelStages => !!s));
@@ -1825,13 +1822,7 @@ export default function FunnelTestPage() {
             {state === "running" && <RefreshCw className="h-3 w-3 animate-spin" />}
             {status.text}
           </span>
-          {/* While testing, the "Testing…" badge alone; the step-by-step log isn't shown here */}
-          {state !== "running" && reason ? (
-            <div className="mt-1.5 max-w-[240px] text-xs text-red-700 dark:text-red-400" title={reason}>
-              {!single && firstFailing ? `${serviceLabel(firstFailing)}: ` : ""}
-              {reason}
-            </div>
-          ) : null}
+          {/* The badge alone - the failure reason is on the website's report (See Details) */}
         </td>
         {STAGES.map(s => (
           <td key={s.key} className="px-2 py-4 text-center">
