@@ -424,6 +424,18 @@ export function explainFailure(failure: string | null | undefined, siteProblem?:
   const site = siteProblem ?? "";
   if (!f && !site) return null;
 
+  // The site's firewall answered with its "are you human?" page instead of the site
+  // (seen on DDJ Heating: cPGuard, after a day of back-to-back tests)
+  if (/^Blocked by the site's firewall/.test(f)) {
+    const ip = f.match(/internet address \(([^)]+)\)/)?.[1];
+    return {
+      owner: "setup",
+      title: "The website's firewall blocked the tester",
+      what: `${f.replace(/^Blocked by the site's firewall:\s*/, "")} The form itself wasn't reached, so this says nothing about whether it works.`,
+      fix: `Ask whoever manages the site's hosting to whitelist ${ip ? `this computer's address ${ip}` : "this computer's internet address"} in its firewall (cPanel → cPGuard / Wordfence / Cloudflare), or wait - temporary blocks lift by themselves. The tester stays away from the site for 30 minutes so the block can lift.`,
+    };
+  }
+
   // The quote went through but the site's results had no product for the answers
   // given (seen on Nicholson Heating: "product not found" after the SMS code)
   const noProduct = f.match(/No product for these answers: .*?said "(.+?)"/);
@@ -642,7 +654,10 @@ const OTP_FAILURE = /OTP|SMS code|verification code/i;
 
 // Every funnel must have Google Tag Manager; a quote form without it isn't working
 export const GTM_MISSING = "Google Tag Manager (GTM) not found on the quote form";
-export const gtmMissing = (result: { gtm_found?: boolean | null } | null | undefined) => result?.gtm_found === false;
+// Not when the site never showed its page at all (a firewall block page, or the site
+// unreachable): there was no quote form to look for Google Tag Manager on
+export const gtmMissing = (result: { gtm_found?: boolean | null; failure?: string | null } | null | undefined) =>
+  result?.gtm_found === false && !/^(Blocked by the site's firewall|Site not reachable|Site too slow)/.test(result.failure ?? "");
 
 // From one device's result: did it get through the form, the SMS code, to the
 // thank-you/results page, and did the results-page buttons work?
