@@ -53,12 +53,18 @@ export interface ResultsButton {
   note: string;
 }
 
+// A button that picks one of several products on the results page ("Pick", "Select",
+// "Choose") - counted as working: the test often can't reach the one it saw (seen on
+// Cambridge Solar Battery: "Pick" wasn't visible on desktop)
+const PRODUCT_CHOICE_BUTTON = /^\s*(pick|select|choose)\b/i;
+
 // Whether a results-page button worked. A checkout button ("Secure your online
 // price", "Buy now"...) works when it opens the checkout page - whether the test
 // payment there went through is shown on its own ("payment not paid"). Seen on ACF
 // Air Conditioning: checkout opened fine on desktop, but filling it in didn't
 // finish, and the button was reported as not working.
 export function resultsButtonWorked(b: FinalActionLike, payment?: string | null): boolean {
+  if (PRODUCT_CHOICE_BUTTON.test(b.label)) return true;
   if (CHECKOUT_BUTTON.test(b.label)) {
     if (payment === "Paid (test)") return true;
     if (!b.error && /checkout|basket|cart|payment|order/i.test(b.resultingUrl)) return true;
@@ -72,6 +78,7 @@ export function resultsButtonWorked(b: FinalActionLike, payment?: string | null)
 
 export function resultsButtonNote(b: FinalActionLike, worked: boolean): string {
   if (worked) {
+    if (PRODUCT_CHOICE_BUTTON.test(b.label) && b.error) return "product choice - counted as working";
     if (/\/(checkout|payment)/i.test(b.resultingUrl) || CHECKOUT_BUTTON.test(b.label)) return "opened checkout";
     if (b.warning && /follow-up form/i.test(b.warning)) return "opened (its form isn't sent by the test)";
     return "opened";
@@ -279,6 +286,8 @@ export interface SiteRequestProblem {
   count: number;
   /** The server's own message, e.g. "Your session has expired. Please reload the page and try again." */
   message: string | null;
+  /** "METHOD url" without the query - only used while detecting */
+  request?: string;
 }
 
 // The walker records every XHR/fetch as "STATUS METHOD URL -> body". When the walk
@@ -299,15 +308,26 @@ export function detectSiteRequestProblem(report: Pick<WalkReport, "startUrl" | "
   }
 
   const byEndpoint = new Map<string, SiteRequestProblem>();
-  for (const call of report.apiCalls ?? []) {
-    const m = call.match(/^(\d{3}) (\w+) (\S+) -> ([\s\S]*)$/);
+  // Where each request last failed and last worked: one that worked again later
+  // didn't stop the form. Seen on Nicholson Heating: the postcode search refused
+  // an empty search at step 1 (400 "Search term required"), worked at step 18,
+  // and was still reported as why the form failed at step 25.
+  const lastFailedAt = new Map<string, number>();
+  const lastWorkedAt = new Map<string, number>();
+  const calls = report.apiCalls ?? [];
+  for (let index = 0; index < calls.length; index++) {
+    const m = calls[index].match(/^(\d{3}) (\w+) (\S+) -> ([\s\S]*)$/);
     if (!m) continue;
     const status = Number(m[1]);
     // Some servers answer "200 OK" with the error in the body - seen in practice: a
     // quote form's own save endpoint returning "You have an error in your SQL syntax"
     // when the address contained an apostrophe ("King's Road")
     const errorBody = SERVER_ERROR_TEXT.exec(m[4]);
-    if (status < 400 && !errorBody) continue;
+    if (status < 400 && !errorBody) {
+      lastWorkedAt.set(`${m[2]} ${m[3].split("?")[0]}`, index);
+      continue;
+    }
+    lastFailedAt.set(`${m[2]} ${m[3].split("?")[0]}`, index);
     let url: URL;
     try {
       url = new URL(m[3]);
@@ -341,13 +361,16 @@ export function detectSiteRequestProblem(report: Pick<WalkReport, "startUrl" | "
     const key = `${status} ${m[2]} ${url.pathname}`;
     const existing = byEndpoint.get(key);
     if (existing) existing.count++;
-    else byEndpoint.set(key, { status, method: m[2], path: url.pathname, count: 1, message });
+    else byEndpoint.set(key, { status, method: m[2], path: url.pathname, count: 1, message, request: `${m[2]} ${m[3].split("?")[0]}` });
   }
 
   let worst: SiteRequestProblem | null = null;
   byEndpoint.forEach(p => {
+    const request = p.request ?? "";
+    if ((lastWorkedAt.get(request) ?? -1) > (lastFailedAt.get(request) ?? -1)) return;
     if (!worst || p.count > worst.count) worst = p;
   });
+  if (worst) delete (worst as SiteRequestProblem).request;
   return worst;
 }
 
@@ -400,6 +423,19 @@ export function explainFailure(failure: string | null | undefined, siteProblem?:
   const f = failure ?? "";
   const site = siteProblem ?? "";
   if (!f && !site) return null;
+
+  // The quote went through but the site's results had no product for the answers
+  // given (seen on Nicholson Heating: "product not found" after the SMS code)
+  const noProduct = f.match(/No product for these answers: .*?said "(.+?)"/);
+  if (noProduct) {
+    const step = f.match(/step (\d+)/)?.[1];
+    return {
+      owner: "website",
+      title: "The site has no product for these answers",
+      what: `The quote form was sent${step ? `, but at step ${step}` : ", but"} the site's results said "${noProduct[1]}" - so a visitor who gives the same answers reaches a dead end with nothing to choose. The tester stopped there and didn't send any other form.`,
+      fix: "Open the steps above to see which answers were picked, then check the site's product list covers them (or that the results page offers a next step). Nothing to change in the tester.",
+    };
+  }
 
   // 0a. The page stalled (stuck loading, nothing to click) right after the site
   // showed its own error pop-up - that message is the reason, not the tester
@@ -553,6 +589,19 @@ export function explainFailure(failure: string | null | undefined, siteProblem?:
     !/checkout|payment|stripe|installation date|card details/i.test(f)
   ) {
     return { owner: "website", title: "No addresses came up for the postcode", what: "The tester searched two valid postcodes (SW1A 1AA and EC1A 1BB), but the address list never appeared, so it couldn't continue.", fix: "Try a postcode search on the site yourself. If no addresses appear, the site's address lookup is broken (check its API key or cache)." };
+  }
+  // The site took the form (its server answered) but the page never moved on - seen
+  // on Cambridge Solar: hung on "Loading..." when its SMS step refused the number
+  if (/^Sent but stuck at step/i.test(f)) {
+    const step = f.match(/step (\d+)/)?.[1];
+    const answer = f.match(/the site answered \((.+?)\), but/)?.[1];
+    const errors = f.match(/site errors after sending: ([\d, ]+)/)?.[1];
+    return {
+      owner: "website",
+      title: "The form was sent, but the page never moved on",
+      what: `${step ? `At step ${step} the` : "The"} details were sent and the site took them${answer ? ` (${answer})` : ""}, but it never went on to the next page${errors ? ` - its server refused requests after that (${errors})` : ""}. The form wasn't sent again, so no extra leads.`,
+      fix: "Usually the next step after the save failed - often the SMS code (the site can refuse a second code to the same number within a few minutes). Check the site's SMS / verification service for that time, then run the test again.",
+    };
   }
   if (/checkbox|terms|submi(t|ssion)/i.test(f) && /^Blocked/i.test(f)) {
     const step = f.match(/step (\d+)/)?.[1];
