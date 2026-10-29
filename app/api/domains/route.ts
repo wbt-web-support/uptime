@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/utils/supabase/server";
 import { fetchLatestPerDomain } from "@/utils/latest-records";
+import { apiErrorMessage } from "@/utils/api-error";
 
 export async function GET(request: NextRequest) {
   try {
@@ -51,7 +52,7 @@ export async function GET(request: NextRequest) {
   } catch (error: any) {
     console.error("Error fetching domains:", error);
     return NextResponse.json(
-      { error: error.message || "Internal server error" },
+      { error: apiErrorMessage(error) },
       { status: 500 }
     );
   }

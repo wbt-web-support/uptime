@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/utils/supabase/server";
+import { apiErrorMessage } from "@/utils/api-error";
 
 interface MSG91Config {
   authKey: string | null;
@@ -77,7 +78,7 @@ export async function GET(request: NextRequest) {
   } catch (error: any) {
     console.error("MSG91 check error:", error);
     return NextResponse.json(
-      { error: error.message || "Internal server error" },
+      { error: apiErrorMessage(error) },
       { status: 500 }
     );
   }

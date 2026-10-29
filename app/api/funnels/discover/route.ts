@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/utils/funnel-tester";
 import { discoverAndAddFunnels } from "@/utils/funnel-discovery";
+import { apiErrorMessage } from "@/utils/api-error";
 
 // Looks through client sites for their quote funnels (boiler, ASHP, air con, solar,
 // battery...) and adds any not already listed. Reads public pages only; nothing is
@@ -43,7 +44,7 @@ export async function POST(request: NextRequest) {
   } catch (error: any) {
     console.error("Funnel discovery error:", error);
     return NextResponse.json(
-      { error: error.message || "Internal server error" },
+      { error: apiErrorMessage(error) },
       { status: 500 }
     );
   }

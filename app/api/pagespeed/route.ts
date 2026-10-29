@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/utils/supabase/server";
+import { apiErrorMessage } from "@/utils/api-error";
 
 // PageSpeed Insights API endpoint
 // Checks database first, then calls API if needed
@@ -231,7 +232,7 @@ export async function POST(request: NextRequest) {
   } catch (error: any) {
     console.error("PageSpeed API route error:", error);
     return NextResponse.json(
-      { error: error.message || "Internal server error" },
+      { error: apiErrorMessage(error) },
       { status: 500 }
     );
   }

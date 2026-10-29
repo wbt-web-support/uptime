@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { probeUrl } from "@/utils/monitoring";
 import { requireAdmin } from "@/utils/funnel-tester";
+import { apiErrorMessage } from "@/utils/api-error";
 
 export async function POST(request: NextRequest) {
   try {
@@ -54,7 +55,7 @@ export async function POST(request: NextRequest) {
   } catch (error: any) {
     console.error("Funnel check error:", error);
     return NextResponse.json(
-      { error: error.message || "Internal server error" },
+      { error: apiErrorMessage(error) },
       { status: 500 }
     );
   }

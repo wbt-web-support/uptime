@@ -3,6 +3,7 @@ import { createAdminClient } from "@/utils/pagespeed";
 import { probeUrl } from "@/utils/monitoring";
 import { startFunnelTest, syncFunnelTest } from "@/utils/funnel-tester";
 import { isChooserFunnel } from "@/utils/funnel-discovery";
+import { apiErrorMessage } from "@/utils/api-error";
 
 // Scheduled funnel tester: tests funnels automatically, one at a time.
 //
@@ -132,6 +133,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ message: "No reachable funnel to test this run", skipped_down: skipped });
   } catch (error: any) {
     console.error("[cron/funnels] error:", error);
-    return NextResponse.json({ error: error.message || "Internal server error" }, { status: 500 });
+    return NextResponse.json({ error: apiErrorMessage(error) }, { status: 500 });
   }
 }

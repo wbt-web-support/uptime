@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin, startUiCheck } from "@/utils/funnel-tester";
+import { apiErrorMessage } from "@/utils/api-error";
 
 // Start a UI check on the funnel-tester backend: loads the page on desktop and
 // mobile, clicks every quote button and looks for visual problems. No forms are
@@ -36,7 +37,7 @@ export async function POST(request: NextRequest) {
   } catch (error: any) {
     console.error("UI check start error:", error);
     return NextResponse.json(
-      { error: error.message || "Internal server error" },
+      { error: apiErrorMessage(error) },
       { status: 500 }
     );
   }

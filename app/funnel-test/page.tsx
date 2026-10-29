@@ -20,6 +20,7 @@ import {
   type ProblemOwner,
 } from "@/utils/funnel-report";
 import { createClient } from "@/utils/supabase/client";
+import { apiErrorMessage } from "@/utils/api-error";
 import { FunnelStageMarks, StageCell } from "@/components/FunnelStageMarks";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
@@ -721,7 +722,7 @@ export default function FunnelTestPage() {
       (funnelsRes.data || []).filter(f => f.ui_status === "running").forEach(f => pollUiCheck(f.id));
       setDomains(domainsRes.data || []);
     } catch (err: any) {
-      setError(err.message);
+      setError(apiErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -909,7 +910,7 @@ export default function FunnelTestPage() {
           : `${name} added. No separate quote pages were found, so its landing page will be tested`
       );
     } catch (err: any) {
-      setError(err.message);
+      setError(apiErrorMessage(err));
     } finally {
       setSaving(false);
     }
@@ -919,7 +920,7 @@ export default function FunnelTestPage() {
     if (!window.confirm(`Delete "${funnel.name}" from funnel testing?\n\nIts saved test reports go too. The domain stays in uptime monitoring.`)) return;
     const { error } = await supabase.from("funnels").delete().eq("id", funnel.id);
     if (error) {
-      setError(error.message);
+      setError(apiErrorMessage(error));
       return;
     }
     setFunnels(prev => prev.filter(f => f.id !== funnel.id));
@@ -950,7 +951,7 @@ export default function FunnelTestPage() {
       } : f));
       return true;
     } catch (err: any) {
-      setError(err.message);
+      setError(apiErrorMessage(err));
       return false;
     } finally {
       setCheckingIds(prev => {
@@ -1013,7 +1014,7 @@ export default function FunnelTestPage() {
         if (data.message) setTestMessages(prev => ({ ...prev, [id]: data.message }));
         if (data.live) setTestLive(prev => ({ ...prev, [id]: data.live }));
       } catch (err: any) {
-        setError(err.message);
+        setError(apiErrorMessage(err));
         return null;
       }
       await sleep(TEST_POLL_MS);
@@ -1066,7 +1067,7 @@ export default function FunnelTestPage() {
         });
         setTestMessages(prev => ({ ...prev, [funnel.id]: "Starting..." }));
       } catch (err: any) {
-        setError(err.message);
+        setError(apiErrorMessage(err));
         // No test number can get SMS codes now (Twilio block / daily limit): end a
         // Test all here instead of trying every remaining funnel and failing each
         if (/test phone number/i.test(err.message ?? "")) stopTestAllRef.current = true;
@@ -1095,7 +1096,7 @@ export default function FunnelTestPage() {
       replaceFunnel(data.funnel);
       setSuccess(`Stopped the test on "${funnel.name}"`);
     } catch (err: any) {
-      setError(err.message);
+      setError(apiErrorMessage(err));
     } finally {
       setStoppingIds(prev => {
         const next = new Set(prev);
@@ -1134,7 +1135,7 @@ export default function FunnelTestPage() {
       try {
         await next.run();
       } catch (err: any) {
-        setError(err?.message ?? String(err));
+        setError(apiErrorMessage(err));
       }
     }
     activeRunKeyRef.current = null;
@@ -1274,7 +1275,7 @@ export default function FunnelTestPage() {
         }
         if (data.message) setUiMessages(prev => ({ ...prev, [id]: data.message }));
       } catch (err: any) {
-        setError(err.message);
+        setError(apiErrorMessage(err));
         return null;
       }
       await sleep(TEST_POLL_MS);
@@ -1296,7 +1297,7 @@ export default function FunnelTestPage() {
         replaceFunnel({ ...funnel, ui_status: "running", ui_results: null });
         setUiMessages(prev => ({ ...prev, [funnel.id]: "Starting..." }));
       } catch (err: any) {
-        setError(err.message);
+        setError(apiErrorMessage(err));
         return null;
       }
     }
@@ -1335,7 +1336,7 @@ export default function FunnelTestPage() {
       );
       if (data.added.length || marked.length) await fetchData();
     } catch (err: any) {
-      setError(err.message);
+      setError(apiErrorMessage(err));
     } finally {
       setDiscovering(false);
     }
@@ -1746,7 +1747,7 @@ export default function FunnelTestPage() {
     const ids = all.map(f => f.id);
     const { error } = await supabase.from("funnels").delete().in("id", ids);
     if (error) {
-      setError(error.message);
+      setError(apiErrorMessage(error));
       return;
     }
     setFunnels(prev => prev.filter(f => !ids.includes(f.id)));

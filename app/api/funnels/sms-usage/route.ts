@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireAdmin, funnelTesterFetch } from "@/utils/funnel-tester";
+import { apiErrorMessage } from "@/utils/api-error";
 
 // How many SMS verification codes each test phone number has received today,
 // against the funnel tester's daily limit per number
@@ -14,6 +15,6 @@ export async function GET() {
     }
     return NextResponse.json(await res.json());
   } catch (error: any) {
-    return NextResponse.json({ error: error.message || "Internal server error" }, { status: 500 });
+    return NextResponse.json({ error: apiErrorMessage(error) }, { status: 500 });
   }
 }

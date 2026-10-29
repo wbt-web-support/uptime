@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin, syncUiCheck } from "@/utils/funnel-tester";
+import { apiErrorMessage } from "@/utils/api-error";
 
 // Poll a running UI check. Once both devices are done, saves the outcome on the
 // funnel row (and the full results to funnel_reports) and returns it.
@@ -29,7 +30,7 @@ export async function GET(request: NextRequest) {
   } catch (error: any) {
     console.error("UI check status error:", error);
     return NextResponse.json(
-      { error: error.message || "Internal server error" },
+      { error: apiErrorMessage(error) },
       { status: 500 }
     );
   }

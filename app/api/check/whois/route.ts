@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/utils/supabase/server";
 import { checkDomainExpiry } from "@/utils/monitoring";
 import { sendAlert } from "@/utils/email";
+import { apiErrorMessage } from "@/utils/api-error";
 
 const WHOIS_REUSE_DAYS = 7;
 
@@ -88,7 +89,7 @@ export async function POST(request: NextRequest) {
   } catch (error: any) {
     console.error("Domain expiry check error:", error);
     return NextResponse.json(
-      { error: error.message || "Internal server error" },
+      { error: apiErrorMessage(error) },
       { status: 500 }
     );
   }

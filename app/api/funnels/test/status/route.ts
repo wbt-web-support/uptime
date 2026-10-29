@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin, syncFunnelTest } from "@/utils/funnel-tester";
+import { apiErrorMessage } from "@/utils/api-error";
 
 // Poll a running funnel walk. While it runs, returns the walker's latest progress
 // message; once it ends, saves the outcome on the funnel row and returns it.
@@ -29,7 +30,7 @@ export async function GET(request: NextRequest) {
   } catch (error: any) {
     console.error("Funnel test status error:", error);
     return NextResponse.json(
-      { error: error.message || "Internal server error" },
+      { error: apiErrorMessage(error) },
       { status: 500 }
     );
   }

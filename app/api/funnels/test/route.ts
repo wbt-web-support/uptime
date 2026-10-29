@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin, startFunnelTest, startUiCheck, parseViewports } from "@/utils/funnel-tester";
+import { apiErrorMessage } from "@/utils/api-error";
 
 // Start a run on the funnel-tester backend, the way its own dashboard does: the full
 // funnel walk on the chosen device(s) (desktop first, then mobile) together with the
@@ -49,7 +50,7 @@ export async function POST(request: NextRequest) {
   } catch (error: any) {
     console.error("Funnel test start error:", error);
     return NextResponse.json(
-      { error: error.message || "Internal server error" },
+      { error: apiErrorMessage(error) },
       { status: 500 }
     );
   }

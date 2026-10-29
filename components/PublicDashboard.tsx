@@ -10,6 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { AlertTriangle, Grid, List, Clock, Lock, Globe, Server, ExternalLink } from "lucide-react";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { DOMAIN_CATEGORIES } from "@/utils/domain-categories";
+import { apiErrorMessage } from "@/utils/api-error";
 
 interface Domain {
   id: string;
@@ -131,8 +132,8 @@ export default function PublicDashboard() {
 
       setDomains(domainsWithStatus);
     } catch (err: any) {
-      console.error("Error fetching data:", err);
-      setError(err.message);
+      console.error(`Error fetching data: ${apiErrorMessage(err)}`, err);
+      setError(apiErrorMessage(err));
     } finally {
       setLoading(false);
     }

@@ -19,6 +19,7 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { exportRows, domainToExportRow, type ExportFormat } from "@/utils/export";
 import { DOMAIN_CATEGORIES } from "@/utils/domain-categories";
+import { apiErrorMessage } from "@/utils/api-error";
 
 // Category-filter value that selects domains flagged as Dominate clients
 const DOMINATE_FILTER = "Dominate";
@@ -68,8 +69,8 @@ export default function AdminPanel() {
       const { domains: domainsWithStatus } = await response.json();
       setDomains(domainsWithStatus || []);
     } catch (err: any) {
-      console.error("Error fetching data:", err);
-      setError(err.message);
+      console.error(`Error fetching data: ${apiErrorMessage(err)}`, err);
+      setError(apiErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -89,7 +90,7 @@ export default function AdminPanel() {
       setSuccess("Domain deleted successfully!");
       fetchDomains();
     } catch (error: any) {
-      setError(error.message);
+      setError(apiErrorMessage(error));
       setLoading(false);
     }
   };
@@ -413,7 +414,7 @@ export default function AdminPanel() {
       setSelectAll(false);
       fetchDomains();
     } catch (error: any) {
-      setError(error.message);
+      setError(apiErrorMessage(error));
       setLoading(false);
     }
   };
@@ -470,7 +471,7 @@ export default function AdminPanel() {
 
       fetchDomains(); // Refresh data
     } catch (error: any) {
-      setError(error.message);
+      setError(apiErrorMessage(error));
       setLoading(false);
     } finally {
       setLoading(false);

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin, stopFunnelTest } from "@/utils/funnel-tester";
+import { apiErrorMessage } from "@/utils/api-error";
 
 // Stop a running funnel test (and its UI check). The walker finishes the step it is
 // on, then stops; the device still queued never starts. Anything already submitted
@@ -30,7 +31,7 @@ export async function POST(request: NextRequest) {
   } catch (error: any) {
     console.error("Funnel test stop error:", error);
     return NextResponse.json(
-      { error: error.message || "Internal server error" },
+      { error: apiErrorMessage(error) },
       { status: 500 }
     );
   }

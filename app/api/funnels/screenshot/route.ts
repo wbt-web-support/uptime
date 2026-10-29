@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin, funnelTesterFetch } from "@/utils/funnel-tester";
+import { apiErrorMessage } from "@/utils/api-error";
 
 // Screenshots stay on the funnel-tester backend; this passes one through so the
 // browser never talks to the backend (or needs its API key) directly.
@@ -32,7 +33,7 @@ export async function GET(request: NextRequest) {
   } catch (error: any) {
     console.error("Funnel screenshot error:", error);
     return NextResponse.json(
-      { error: error.message || "Internal server error" },
+      { error: apiErrorMessage(error) },
       { status: 500 }
     );
   }
