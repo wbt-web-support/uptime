@@ -534,6 +534,8 @@ interface UiViewportResult {
   ui_issues: string[];
   quote_buttons_found: number;
   quote_buttons_working: number;
+  // Each quote button that was clicked and what it did, for the website report
+  quote_buttons?: { label: string; position: string | null; works: boolean; outcome: string }[];
   // The main call-to-action, only checked when the page has no quote buttons
   cta: { label: string; works: boolean } | null;
   // UK spelling / grammar mistakes in the page text; checked on desktop only
@@ -630,6 +632,12 @@ async function readUiResult(
     ui_issues: uiIssues,
     quote_buttons_found: quoteButtons.length,
     quote_buttons_working: working,
+    quote_buttons: quoteButtons.map(b => ({
+      label: String(b.label ?? "").trim().slice(0, 80),
+      position: b.position ?? null,
+      works: !!b.works,
+      outcome: String(b.outcome ?? "").slice(0, 200),
+    })),
     cta,
     grammar_issues: grammarIssues,
     landing_url: run.landingUrl ?? null,

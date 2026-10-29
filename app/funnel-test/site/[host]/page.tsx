@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { createClient } from "@/utils/supabase/client";
@@ -21,6 +21,8 @@ type Device = "desktop" | "mobile";
 const DEVICES: Device[] = ["desktop", "mobile"];
 const DEVICE_LABEL: Record<Device, string> = { desktop: "Desktop", mobile: "Mobile" };
 const DEVICE_ICON = { desktop: Monitor, mobile: Smartphone };
+// A landing page check younger than this is reused by Run test, not repeated
+const LANDING_CHECK_REUSE_MIN = 60;
 
 interface DeviceResult {
   status: "passed" | "failed" | "error";
@@ -83,6 +85,8 @@ interface UiResult {
   ui_issues: string[];
   quote_buttons_found: number;
   quote_buttons_working: number;
+  // Each button clicked and what it did; missing on older checks
+  quote_buttons?: { label: string; position: string | null; works: boolean; outcome: string }[];
   // UK spelling / grammar mistakes in the page text; desktop only, missing on older checks
   grammar_issues?: { found: string; suggestion: string; reason: string; status?: "fix" | "fixed" }[] | null;
   // Where the quote buttons were checked: the homepage, or a service page when it had none
@@ -225,6 +229,8 @@ export default function SiteReportPage() {
   // Latest daily no-submit check per funnel
   const [health, setHealth] = useState<Record<string, HealthResult>>({});
   const [checkingHealth, setCheckingHealth] = useState(false);
+  // Button lists of older landing page checks, by report id (see load)
+  const [oldQuoteButtons, setOldQuoteButtons] = useState<Record<string, NonNullable<UiResult["quote_buttons"]>>>({});
   const [clientName, setClientName] = useState<string | null>(null);
   const [error, setError] = useState("");
   // A switch that couldn't be saved (e.g. the test_enabled column is missing)
@@ -324,6 +330,28 @@ export default function SiteReportPage() {
       const latest: Record<string, HealthResult> = {};
       for (const r of healthRows ?? []) latest[r.funnel_id] ??= r.report as HealthResult;
       setHealth(latest);
+      // Landing page checks from before the button list was saved on the funnel:
+      // read the list from their saved report instead
+      const oldReportIds = site
+        .flatMap(f => DEVICES.map(d => f.ui_results?.[d]))
+        .filter((u): u is UiResult => !!u && !u.quote_buttons && !!u.report_id)
+        .map(u => u.report_id!);
+      if (oldReportIds.length > 0) {
+        const { data: uiRows } = await supabase.from("funnel_reports").select("id, report").in("id", oldReportIds);
+        const lists: Record<string, NonNullable<UiResult["quote_buttons"]>> = {};
+        for (const row of uiRows ?? []) {
+          const buttons = (row.report as { quoteButtons?: any[] } | null)?.quoteButtons;
+          if (Array.isArray(buttons)) {
+            lists[row.id] = buttons.map(b => ({
+              label: String(b.label ?? "").trim(),
+              position: b.position ?? null,
+              works: !!b.works,
+              outcome: String(b.outcome ?? ""),
+            }));
+          }
+        }
+        setOldQuoteButtons(lists);
+      }
     }
     const domainId = site.find(f => f.domain_id)?.domain_id;
     if (domainId) {
@@ -340,6 +368,50 @@ export default function SiteReportPage() {
   // Each device fills in and sends the form for real, so it asks first.
   const [testMessages, setTestMessages] = useState<Record<string, string>>({});
   const [stopping, setStopping] = useState<string | null>(null);
+  // The funnel whose landing page "Get a quote" buttons are being checked before its test
+  const [uiChecking, setUiChecking] = useState<string | null>(null);
+  const stoppedRef = useRef(false);
+
+  // A status check can fail on its own now and then (a dropped connection to the
+  // database) while the test carries on fine - only say so after a few in a row
+  const failedPolls = useRef(0);
+  const pollFailed = (err: unknown) => {
+    failedPolls.current++;
+    if (failedPolls.current >= 3) setSaveError(apiErrorMessage(err));
+  };
+  const pollWorked = () => {
+    failedPolls.current = 0;
+  };
+
+  // Click every "Get a quote" button on the landing page, desktop and mobile
+  // (nothing is filled in or sent), and wait for it to finish. False when stopped.
+  const checkLandingPage = async (f: Funnel): Promise<boolean> => {
+    const res = await fetch("/api/funnels/ui-check", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ funnelId: f.id }),
+    });
+    // 409 = a check is already running for this funnel: wait for that one
+    if (!res.ok && res.status !== 409) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(res.status === 401 ? "Your session has expired. Please sign in again." : body.error);
+    }
+    while (!stoppedRef.current) {
+      await new Promise(r => setTimeout(r, 5000));
+      try {
+        const statusRes = await fetch(`/api/funnels/ui-check/status?funnelId=${encodeURIComponent(f.id)}`);
+        const body = await statusRes.json();
+        if (!statusRes.ok) throw new Error(statusRes.status === 401 ? "Your session has expired. Please sign in again." : body.error);
+        pollWorked();
+        if (body.funnel.ui_status !== "running") return true;
+        if (body.message) setTestMessages(prev => ({ ...prev, [f.id]: `Landing page: ${body.message}` }));
+      } catch (err) {
+        pollFailed(err);
+      }
+    }
+    return false;
+  };
+
   const startTest = async (f: Funnel, devices: Device[]) => {
     setSaveError("");
     // One test at a time across every website: the two test phone numbers are shared,
@@ -358,11 +430,36 @@ export default function SiteReportPage() {
     const last = f.test_finished_at ? `\n\nLast tested ${shortDate(f.test_finished_at)}.` : "";
     if (
       !window.confirm(
-        `Test "${serviceLabel(f)}" ${where}?\n\nThe form is filled in and sent for real - ${leads} on the client's site, plus any thank-you page forms (Save quote, Book...).${last}`
+        `Test "${serviceLabel(f)}" ${where}?\n\n1. Every "Get a quote" button on the landing page is clicked, on desktop and mobile (nothing is sent) - skipped if it was checked in the last ${LANDING_CHECK_REUSE_MIN} minutes.\n2. Then the form is filled in and sent for real - ${leads} on the client's site, plus any thank-you page forms (Save quote, Book...).${last}`
       )
     )
       return;
+    stoppedRef.current = false;
+    failedPolls.current = 0;
     try {
+      // The landing page is the same for every funnel of the site: a check from the
+      // last hour that worked is kept, rather than clicking every button again (each
+      // check is many visits, and too many in a row trip some sites' firewalls)
+      const recentCheck = (funnels ?? []).some(
+        x =>
+          !!x.ui_checked_at &&
+          Date.now() - new Date(x.ui_checked_at).getTime() < LANDING_CHECK_REUSE_MIN * 60_000 &&
+          DEVICES.every(d => x.ui_results?.[d] && !x.ui_results[d]!.error)
+      );
+      let finished = true;
+      if (!recentCheck) {
+        setUiChecking(f.id);
+        setTestMessages(prev => ({ ...prev, [f.id]: "Checking every \"Get a quote\" button on the landing page (desktop and mobile)..." }));
+        try {
+          finished = await checkLandingPage(f);
+        } catch (err) {
+          // The landing page check is extra: if it can't run, the funnel test still does
+          setSaveError(`Couldn't check the landing page buttons (${apiErrorMessage(err)}) - testing the funnel anyway.`);
+        }
+        setUiChecking(null);
+        await load();
+      }
+      if (!finished) return;
       const res = await fetch("/api/funnels/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -374,11 +471,14 @@ export default function SiteReportPage() {
       setTestMessages(prev => ({ ...prev, [f.id]: "Starting..." }));
     } catch (err: any) {
       setSaveError(apiErrorMessage(err));
+    } finally {
+      setUiChecking(null);
     }
   };
 
   const stopTest = async (f: Funnel) => {
     if (!window.confirm(`Stop the test on "${serviceLabel(f)}"?\n\nIt stops after the step it's on. Anything already sent stays sent. If an SMS code is on its way, it's entered first so it isn't wasted.`)) return;
+    stoppedRef.current = true;
     setStopping(f.id);
     try {
       const res = await fetch("/api/funnels/test/stop", {
@@ -408,6 +508,7 @@ export default function SiteReportPage() {
           const body = await res.json();
           if (!res.ok) throw new Error(res.status === 401 ? "Your session has expired. Please sign in again." : body.error);
           if (cancelled) return;
+          pollWorked();
           if (body.funnel.test_status === "running") {
             if (body.message) setTestMessages(prev => ({ ...prev, [id]: body.message }));
           } else {
@@ -418,7 +519,7 @@ export default function SiteReportPage() {
             await load();
           }
         } catch (err: any) {
-          if (!cancelled) setSaveError(apiErrorMessage(err));
+          if (!cancelled) pollFailed(err);
         }
       }
     };
@@ -587,7 +688,7 @@ export default function SiteReportPage() {
           })()}
         </p>
         {!uiSource ? (
-          <p className="rounded-lg border p-4 text-sm text-muted-foreground">Not checked yet - it runs at the start of every test.</p>
+          <p className="rounded-lg border p-4 text-sm text-muted-foreground">Not checked yet - it runs at the start of every test (Run test below).</p>
         ) : (
           <>
             <div className="overflow-x-auto rounded-lg border">
@@ -628,6 +729,19 @@ export default function SiteReportPage() {
                                 : `${ui.quote_buttons_working} of ${ui.quote_buttons_found} work`}
                             </span>
                           )}
+                          {(() => {
+                            const list = ui && !ui.error ? ui.quote_buttons ?? (ui.report_id ? oldQuoteButtons[ui.report_id] : undefined) : undefined;
+                            return list && list.length > 0 ? (
+                            <ul className="mt-2 space-y-0.5 text-xs">
+                              {list.map((b, i) => (
+                                <li key={i} className={b.works ? "text-muted-foreground" : "text-amber-700 dark:text-amber-400"}>
+                                  {b.works ? "✅" : "⚠️"} <span className="font-medium">{b.label || "(no text)"}</span>
+                                  {b.position && <span> ({b.position})</span>}: {b.outcome}
+                                </li>
+                              ))}
+                            </ul>
+                            ) : null;
+                          })()}
                         </td>
                       </tr>
                     );
@@ -729,7 +843,7 @@ export default function SiteReportPage() {
                     <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${status.cls}`}>{status.text}</span>
                   </div>
                   <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
-                    {f.test_status === "running" ? (
+                    {f.test_status === "running" || uiChecking === f.id ? (
                       <button
                         type="button"
                         onClick={() => stopTest(f)}
@@ -743,7 +857,7 @@ export default function SiteReportPage() {
                       <button
                         type="button"
                         onClick={() => startTest(f, DEVICES)}
-                        disabled={!on}
+                        disabled={!on || uiChecking !== null}
                         className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border px-2.5 py-1 text-xs font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-50"
                         title={on ? "Test this funnel again: desktop, then mobile" : "Tick Include in tests to test this funnel"}
                       >
@@ -779,9 +893,9 @@ export default function SiteReportPage() {
                 <HistoryStrip entries={history[f.id] ?? []} />
                 <HealthLine result={health[f.id]} />
 
-                {f.test_status === "running" ? (
+                {f.test_status === "running" || uiChecking === f.id ? (
                   <div className="px-4 py-4 text-sm text-blue-700 dark:text-blue-300">
-                    Testing right now…
+                    {uiChecking === f.id ? "Checking the landing page first…" : "Testing right now…"}
                     {testMessages[f.id] && <p className="mt-1 truncate text-xs" title={testMessages[f.id]}>{testMessages[f.id]}</p>}
                   </div>
                 ) : !f.test_results ? (
@@ -894,6 +1008,7 @@ export default function SiteReportPage() {
                                   {on && (
                                     <button
                                       type="button"
+                                      disabled={uiChecking !== null}
                                       onClick={() => startTest(f, [d])}
                                       className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border px-2.5 py-1 text-xs font-medium transition-colors hover:bg-muted"
                                       title={`Test this funnel again on ${d} only - the other device keeps its last result`}
