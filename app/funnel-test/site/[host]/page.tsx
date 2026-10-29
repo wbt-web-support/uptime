@@ -1,13 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { createClient } from "@/utils/supabase/client";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StageCell } from "@/components/FunnelStageMarks";
 import { FunnelReportView } from "@/components/FunnelReportView";
-import { AlertCircle, ArrowLeft, ChevronDown, ChevronUp, Clock, ExternalLink, Globe, Monitor, RefreshCw, Smartphone, X } from "lucide-react";
+import { AlertCircle, ArrowLeft, ChevronDown, ChevronUp, Clock, ExternalLink, Globe, Monitor, Play, RefreshCw, Smartphone, Square, X } from "lucide-react";
+import { apiErrorMessage } from "@/utils/api-error";
 import { deriveStages, explainFailure, GTM_MISSING, gtmMissing, OWNER_LABEL, STAGES, type ProblemOwner } from "@/utils/funnel-report";
 import { isChooserFunnel } from "@/utils/funnel-discovery";
 import type { HealthResult } from "@/utils/funnel-health";
@@ -288,48 +289,146 @@ export default function SiteReportPage() {
     }
   };
 
-  useEffect(() => {
-    (async () => {
-      const { data, error: loadError } = await supabase
-        .from("funnels")
-        .select("*")
-        .order("name", { ascending: true });
-      if (loadError) {
-        setError(loadError.message);
-        return;
-      }
-      const site = (data as Funnel[]).filter(f => hostOf(f.url) === host);
-      setFunnels(site);
-      // Last tests of each funnel (small summaries, newest first)
-      if (site.length > 0) {
-        const { data: rows } = await supabase
-          .from("funnel_reports")
-          .select("funnel_id, report")
-          .eq("kind", "history")
-          .in("funnel_id", site.map(f => f.id))
-          .order("created_at", { ascending: false })
-          .limit(site.length * 30);
-        const byFunnel: Record<string, HistoryEntry[]> = {};
-        for (const r of rows ?? []) (byFunnel[r.funnel_id] ??= []).push(r.report as HistoryEntry);
-        setHistory(byFunnel);
-        const { data: healthRows } = await supabase
-          .from("funnel_reports")
-          .select("funnel_id, report")
-          .eq("kind", "health")
-          .in("funnel_id", site.map(f => f.id))
-          .order("created_at", { ascending: false })
-          .limit(site.length * 3);
-        const latest: Record<string, HealthResult> = {};
-        for (const r of healthRows ?? []) latest[r.funnel_id] ??= r.report as HealthResult;
-        setHealth(latest);
-      }
-      const domainId = site.find(f => f.domain_id)?.domain_id;
-      if (domainId) {
-        const { data: d } = await supabase.from("domains").select("display_name, domain_name").eq("id", domainId).maybeSingle();
-        if (d) setClientName(d.display_name || d.domain_name);
-      }
-    })();
+  // Everything on the page, from the database; run again when a test finishes so
+  // its result and the history dots show up
+  const load = useCallback(async () => {
+    const { data, error: loadError } = await supabase
+      .from("funnels")
+      .select("*")
+      .order("name", { ascending: true });
+    if (loadError) {
+      setError(apiErrorMessage(loadError));
+      return;
+    }
+    const site = (data as Funnel[]).filter(f => hostOf(f.url) === host);
+    setFunnels(site);
+    // Last tests of each funnel (small summaries, newest first)
+    if (site.length > 0) {
+      const { data: rows } = await supabase
+        .from("funnel_reports")
+        .select("funnel_id, report")
+        .eq("kind", "history")
+        .in("funnel_id", site.map(f => f.id))
+        .order("created_at", { ascending: false })
+        .limit(site.length * 30);
+      const byFunnel: Record<string, HistoryEntry[]> = {};
+      for (const r of rows ?? []) (byFunnel[r.funnel_id] ??= []).push(r.report as HistoryEntry);
+      setHistory(byFunnel);
+      const { data: healthRows } = await supabase
+        .from("funnel_reports")
+        .select("funnel_id, report")
+        .eq("kind", "health")
+        .in("funnel_id", site.map(f => f.id))
+        .order("created_at", { ascending: false })
+        .limit(site.length * 3);
+      const latest: Record<string, HealthResult> = {};
+      for (const r of healthRows ?? []) latest[r.funnel_id] ??= r.report as HealthResult;
+      setHealth(latest);
+    }
+    const domainId = site.find(f => f.domain_id)?.domain_id;
+    if (domainId) {
+      const { data: d } = await supabase.from("domains").select("display_name, domain_name").eq("id", domainId).maybeSingle();
+      if (d) setClientName(d.display_name || d.domain_name);
+    }
   }, [supabase, host]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  // Run one funnel again from here - both devices, or just the one that failed.
+  // Each device fills in and sends the form for real, so it asks first.
+  const [testMessages, setTestMessages] = useState<Record<string, string>>({});
+  const [stopping, setStopping] = useState<string | null>(null);
+  const startTest = async (f: Funnel, devices: Device[]) => {
+    setSaveError("");
+    // One test at a time across every website: the two test phone numbers are shared,
+    // so two tests at once could read each other's SMS codes
+    const { data: running, error: runningError } = await supabase.from("funnels").select("name").eq("test_status", "running").limit(1);
+    if (runningError) {
+      setSaveError(apiErrorMessage(runningError));
+      return;
+    }
+    if (running && running.length > 0) {
+      setSaveError(`"${running[0].name}" is being tested right now. One test runs at a time (the test phone numbers are shared) - wait for it to finish, then press Run test again.`);
+      return;
+    }
+    const where = devices.length === 2 ? "on desktop and then mobile" : `on ${devices[0]} only`;
+    const leads = `${devices.length} real lead${devices.length === 1 ? "" : "s"}`;
+    const last = f.test_finished_at ? `\n\nLast tested ${shortDate(f.test_finished_at)}.` : "";
+    if (
+      !window.confirm(
+        `Test "${serviceLabel(f)}" ${where}?\n\nThe form is filled in and sent for real - ${leads} on the client's site, plus any thank-you page forms (Save quote, Book...).${last}`
+      )
+    )
+      return;
+    try {
+      const res = await fetch("/api/funnels/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ funnelId: f.id, viewports: devices, withUiCheck: false, ignoreCooldown: true }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(res.status === 401 ? "Your session has expired. Please sign in again." : body.error);
+      setFunnels(prev => prev?.map(x => (x.id === f.id ? { ...x, test_status: "running", test_started_at: body.started_at } : x)) ?? prev);
+      setTestMessages(prev => ({ ...prev, [f.id]: "Starting..." }));
+    } catch (err: any) {
+      setSaveError(apiErrorMessage(err));
+    }
+  };
+
+  const stopTest = async (f: Funnel) => {
+    if (!window.confirm(`Stop the test on "${serviceLabel(f)}"?\n\nIt stops after the step it's on. Anything already sent stays sent. If an SMS code is on its way, it's entered first so it isn't wasted.`)) return;
+    setStopping(f.id);
+    try {
+      const res = await fetch("/api/funnels/test/stop", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ funnelId: f.id }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(res.status === 401 ? "Your session has expired. Please sign in again." : body.error);
+      await load();
+    } catch (err: any) {
+      setSaveError(apiErrorMessage(err));
+    } finally {
+      setStopping(null);
+    }
+  };
+
+  // Follow every test running on this website until it ends
+  const runningIds = (funnels ?? []).filter(f => f.test_status === "running").map(f => f.id).join(",");
+  useEffect(() => {
+    if (!runningIds) return;
+    let cancelled = false;
+    const poll = async () => {
+      for (const id of runningIds.split(",")) {
+        try {
+          const res = await fetch(`/api/funnels/test/status?funnelId=${encodeURIComponent(id)}`);
+          const body = await res.json();
+          if (!res.ok) throw new Error(res.status === 401 ? "Your session has expired. Please sign in again." : body.error);
+          if (cancelled) return;
+          if (body.funnel.test_status === "running") {
+            if (body.message) setTestMessages(prev => ({ ...prev, [id]: body.message }));
+          } else {
+            setTestMessages(prev => {
+              const { [id]: _, ...rest } = prev;
+              return rest;
+            });
+            await load();
+          }
+        } catch (err: any) {
+          if (!cancelled) setSaveError(apiErrorMessage(err));
+        }
+      }
+    };
+    poll();
+    const timer = setInterval(poll, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [runningIds, load]);
 
   const backLink = (
     <Link href="/funnel-test" className="mb-4 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
@@ -630,6 +729,27 @@ export default function SiteReportPage() {
                     <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${status.cls}`}>{status.text}</span>
                   </div>
                   <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
+                    {f.test_status === "running" ? (
+                      <button
+                        type="button"
+                        onClick={() => stopTest(f)}
+                        disabled={stopping === f.id}
+                        className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border px-2.5 py-1 text-xs font-medium text-red-600 transition-colors hover:bg-muted disabled:opacity-50"
+                        title="Stop this test"
+                      >
+                        <Square className="h-3.5 w-3.5" /> {stopping === f.id ? "Stopping…" : "Stop"}
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => startTest(f, DEVICES)}
+                        disabled={!on}
+                        className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border px-2.5 py-1 text-xs font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+                        title={on ? "Test this funnel again: desktop, then mobile" : "Tick Include in tests to test this funnel"}
+                      >
+                        <Play className="h-3.5 w-3.5" /> Run test
+                      </button>
+                    )}
                     <label
                       className="inline-flex cursor-pointer items-center gap-1.5 font-medium text-foreground"
                       title={on ? "Untick to stop testing this funnel" : "Tick to test this funnel again"}
@@ -660,7 +780,10 @@ export default function SiteReportPage() {
                 <HealthLine result={health[f.id]} />
 
                 {f.test_status === "running" ? (
-                  <p className="px-4 py-4 text-sm text-blue-700 dark:text-blue-300">Testing right now…</p>
+                  <div className="px-4 py-4 text-sm text-blue-700 dark:text-blue-300">
+                    Testing right now…
+                    {testMessages[f.id] && <p className="mt-1 truncate text-xs" title={testMessages[f.id]}>{testMessages[f.id]}</p>}
+                  </div>
                 ) : !f.test_results ? (
                   <p className="px-4 py-4 text-sm text-muted-foreground">
                     {f.test_failure ? explainFailure(f.test_failure)?.title ?? f.test_failure : "Not tested yet."}
@@ -764,9 +887,21 @@ export default function SiteReportPage() {
                                 )}
                               </td>
                               <td className="px-4 py-4 text-right">
-                                {r?.report_id && (
-                                  <ReportToggle open={openReport === key} onClick={() => toggleReport(key)} label="Step by step" />
-                                )}
+                                <div className="flex flex-col items-end gap-2">
+                                  {r?.report_id && (
+                                    <ReportToggle open={openReport === key} onClick={() => toggleReport(key)} label="Step by step" />
+                                  )}
+                                  {on && (
+                                    <button
+                                      type="button"
+                                      onClick={() => startTest(f, [d])}
+                                      className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border px-2.5 py-1 text-xs font-medium transition-colors hover:bg-muted"
+                                      title={`Test this funnel again on ${d} only - the other device keeps its last result`}
+                                    >
+                                      <RefreshCw className="h-3.5 w-3.5" /> Test {d} again
+                                    </button>
+                                  )}
+                                </div>
                               </td>
                             </tr>
                           );
