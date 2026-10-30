@@ -437,15 +437,14 @@ export default function SiteReportPage() {
     stoppedRef.current = false;
     failedPolls.current = 0;
     try {
-      // The landing page is the same for every funnel of the site: a check from the
-      // last hour that worked is kept, rather than clicking every button again (each
-      // check is many visits, and too many in a row trip some sites' firewalls)
-      const recentCheck = (funnels ?? []).some(
-        x =>
-          !!x.ui_checked_at &&
-          Date.now() - new Date(x.ui_checked_at).getTime() < LANDING_CHECK_REUSE_MIN * 60_000 &&
-          DEVICES.every(d => x.ui_results?.[d] && !x.ui_results[d]!.error)
-      );
+      // Each funnel's landing check clicks only its own quote buttons, so this
+      // funnel's check from the last hour that worked is kept rather than clicking
+      // them all again (each check is many visits, and too many in a row trip some
+      // sites' firewalls)
+      const recentCheck =
+        !!f.ui_checked_at &&
+        Date.now() - new Date(f.ui_checked_at).getTime() < LANDING_CHECK_REUSE_MIN * 60_000 &&
+        DEVICES.every(d => f.ui_results?.[d] && !f.ui_results[d]!.error);
       let finished = true;
       if (!recentCheck) {
         setUiChecking(f.id);
@@ -659,7 +658,14 @@ export default function SiteReportPage() {
       <section className="mb-10">
         <h2 className="text-lg font-semibold">Landing page</h2>
         <p className="mb-3 text-sm text-muted-foreground">
-          Every &quot;Get a quote&quot; button on the homepage is clicked to check it leads somewhere. Nothing is submitted.
+          The homepage&apos;s &quot;Get a quote&quot; buttons for the funnel being tested are clicked to check they lead somewhere
+          (other services&apos; buttons are checked when those funnels are tested). Nothing is submitted.
+          {uiSource && !isHomepage(uiSource.url) && (
+            <>
+              {" "}Last checked for <span className="font-medium text-foreground">{serviceLabel(uiSource)}</span>
+              {uiSource.ui_checked_at && <> ({shortDate(uiSource.ui_checked_at)})</>}.
+            </>
+          )}
           {(() => {
             // The homepage had none, so the funnel's service page was checked instead
             const checked = uiSource?.ui_results?.desktop?.landing_url ?? uiSource?.ui_results?.mobile?.landing_url;
