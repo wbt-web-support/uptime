@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin, startUiCheck } from "@/utils/funnel-tester";
 import { apiErrorMessage } from "@/utils/api-error";
 
-// Start a UI check on the funnel-tester backend: loads the page on desktop and
+// Start a UI check on the funnel tester (tester/): loads the page on desktop and
 // mobile, clicks every quote button and looks for visual problems. No forms are
 // submitted, so unlike the funnel test it creates no leads.
 export async function POST(request: NextRequest) {

@@ -1,0 +1,22 @@
+{
+  "name": "funnel-tester-backend",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Standalone backend for Funnel Tester - AI-driven funnel walker API (run/reports/screenshot), meant for an always-on host (Railway/Docker), not serverless.",
+  "scripts": {
+    "dev": "tsx watch --include \"src/**/*.ts\" src/server.ts",
+    "start": "tsx src/server.ts"
+  },
+  "dependencies": {
+    "cors": "2.8.5",
+    "express": "4.21.1",
+    "playwright": "1.48.2",
+    "tsx": "4.19.2"
+  },
+  "devDependencies": {
+    "@types/cors": "2.8.17",
+    "@types/express": "4.17.21",
+    "@types/node": "22.9.0",
+    "typescript": "5.6.3"
+  }
+}

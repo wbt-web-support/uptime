@@ -40,6 +40,6 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# funnel-tester is the test runner this app calls over HTTP. It's kept locally
-# for reference and running, and is never committed to this repo.
+# funnel-tester/ is the old reference copy of the tester; the tester itself now
+# lives in tester/ (its own .gitignore keeps its keys and test data out).
 funnel-tester/

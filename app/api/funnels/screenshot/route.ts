@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin, funnelTesterFetch } from "@/utils/funnel-tester";
 import { apiErrorMessage } from "@/utils/api-error";
 
-// Screenshots stay on the funnel-tester backend; this passes one through so the
+// Screenshots stay on the funnel tester (tester/); this passes one through so the
 // browser never talks to the backend (or needs its API key) directly.
 export async function GET(request: NextRequest) {
   try {

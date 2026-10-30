@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin, startFunnelTest, startUiCheck, parseViewports } from "@/utils/funnel-tester";
 import { apiErrorMessage } from "@/utils/api-error";
 
-// Start a run on the funnel-tester backend, the way its own dashboard does: the full
+// Start a run on the funnel tester (tester/), the way its own dashboard does: the full
 // funnel walk on the chosen device(s) (desktop first, then mobile) together with the
 // UI check. The walk submits the funnel's form for real, so each device creates a
 // real lead on the client's site; the UI check submits nothing.

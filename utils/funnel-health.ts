@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { funnelTesterFetch } from "@/utils/funnel-tester";
 import { sendFunnelAlert } from "@/utils/notifications";
 
-// The daily no-submit check of a funnel (funnel-tester/backend/src/quickCheck.ts):
+// The daily no-submit check of a funnel (tester/src/quickCheck.ts):
 // page loads, quote form shows, GTM, the site's postcode lookup, the checkout's
 // Stripe key, phone links. Nothing is filled in or sent, so no leads and no
 // payments. Saved as funnel_reports rows of kind "health".

@@ -1,0 +1,3 @@
+# The funnel tester runs on its own server (Railway/Docker), not on Vercel
+tester/
+funnel-tester/

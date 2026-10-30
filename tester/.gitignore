@@ -1,0 +1,11 @@
+node_modules/
+dist/
+reports/*.json
+screenshots/*
+!screenshots/.gitkeep
+*.log
+.env
+.env.local
+otp-usage.json
+otp-site-numbers.json
+otp-blocked.json

@@ -3,7 +3,10 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "tester": "npm --prefix tester run dev",
+    "tester:install": "npm --prefix tester ci",
+    "dev:all": "node scripts/dev-all.mjs"
   },
   "dependencies": {
     "@radix-ui/react-checkbox": "^1.1.1",

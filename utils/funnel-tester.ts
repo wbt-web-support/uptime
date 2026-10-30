@@ -4,7 +4,7 @@ import { createClient } from "@/utils/supabase/server";
 import { sendFunnelAlert } from "@/utils/notifications";
 import { buildSummary, deriveStages, uncountedButton, explainFailure, quoteFormEmailNote, resultsButtonNote, resultsButtonWorked, summarizeWalk, type FinalActionLike, type ResultsButton, type WalkReport } from "@/utils/funnel-report";
 
-// The funnel-tester backend (funnel-tester/backend) runs as its own always-on server:
+// The funnel tester (tester/ in this project) runs as its own always-on process:
 // a walk drives a real browser for minutes, which does not fit a serverless function.
 export const FUNNEL_TESTER_URL = (process.env.FUNNEL_TESTER_URL || "http://localhost:4000").replace(/\/$/, "");
 // On Vercel, "localhost" is Vercel's own server, not the computer running the tester:
@@ -715,7 +715,7 @@ export async function funnelTesterFetch(path: string, init?: RequestInit, timeou
   } catch {
     const error: any = new Error(
       TESTER_CONNECTED
-        ? `Funnel tester backend is not reachable at ${FUNNEL_TESTER_URL}. Start it with "npm run dev" in funnel-tester/backend.`
+        ? `Funnel tester backend is not reachable at ${FUNNEL_TESTER_URL}. Start it with "npm run tester" (or "npm run dev:all" for the app and tester together).`
         : "This site has no funnel tester connected, so funnel tests can't run from here. Run them from the app on the computer that runs the tester (http://localhost:3000) - the results show here too. To run them from this site, set FUNNEL_TESTER_URL."
     );
     error.code = "TESTER_OFFLINE";

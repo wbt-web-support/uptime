@@ -1,0 +1,16 @@
+# Secrets stay out of the image - set them as the host's environment variables
+.env
+.env.*
+
+# Installed inside the image (npm ci)
+node_modules
+
+# Local test data - on a server it lives in DATA_DIR (a mounted volume)
+reports
+screenshots
+otp-usage.json
+otp-site-numbers.json
+otp-blocked.json
+
+# Scratch / type-check copies
+.tmpcheck
