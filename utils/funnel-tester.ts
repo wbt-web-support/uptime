@@ -7,6 +7,9 @@ import { buildSummary, deriveStages, uncountedButton, explainFailure, quoteFormE
 // The funnel-tester backend (funnel-tester/backend) runs as its own always-on server:
 // a walk drives a real browser for minutes, which does not fit a serverless function.
 export const FUNNEL_TESTER_URL = (process.env.FUNNEL_TESTER_URL || "http://localhost:4000").replace(/\/$/, "");
+// On Vercel, "localhost" is Vercel's own server, not the computer running the tester:
+// without FUNNEL_TESTER_URL the live site has no tester, and tests run from the local app
+const TESTER_CONNECTED = !!process.env.FUNNEL_TESTER_URL || !process.env.VERCEL;
 // Must match FUNNEL_TESTER_API_KEY on the backend once it is set there
 const FUNNEL_TESTER_API_KEY = process.env.FUNNEL_TESTER_API_KEY;
 // Minimum gap before the same funnel can be tested again after a finished test
@@ -710,7 +713,13 @@ export async function funnelTesterFetch(path: string, init?: RequestInit, timeou
       signal: AbortSignal.timeout(timeoutMs),
     });
   } catch {
-    throw new Error(`Funnel tester backend is not reachable at ${FUNNEL_TESTER_URL}. Start it with "npm run dev" in funnel-tester/backend.`);
+    const error: any = new Error(
+      TESTER_CONNECTED
+        ? `Funnel tester backend is not reachable at ${FUNNEL_TESTER_URL}. Start it with "npm run dev" in funnel-tester/backend.`
+        : "This site has no funnel tester connected, so funnel tests can't run from here. Run them from the app on the computer that runs the tester (http://localhost:3000) - the results show here too. To run them from this site, set FUNNEL_TESTER_URL."
+    );
+    error.code = "TESTER_OFFLINE";
+    throw error;
   }
   if (res.status === 401) {
     throw new Error("The funnel tester rejected the API key. FUNNEL_TESTER_API_KEY must match on both sides.");

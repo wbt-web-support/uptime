@@ -29,9 +29,10 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(await syncUiCheck(supabase, funnel));
   } catch (error: any) {
     console.error("UI check status error:", error);
+    // testerOffline: see /api/funnels/test/status
     return NextResponse.json(
-      { error: apiErrorMessage(error) },
-      { status: 500 }
+      { error: apiErrorMessage(error), testerOffline: error?.code === "TESTER_OFFLINE" },
+      { status: error?.code === "TESTER_OFFLINE" ? 503 : 500 }
     );
   }
 }

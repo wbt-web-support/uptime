@@ -375,6 +375,9 @@ export default function SiteReportPage() {
   // A status check can fail on its own now and then (a dropped connection to the
   // database) while the test carries on fine - only say so after a few in a row
   const failedPolls = useRef(0);
+  // A status check answers testerOffline when the test runs on a tester this site
+  // can't reach (started from the app on the computer running it)
+  const TESTER_ELSEWHERE = "Running on the funnel tester on another computer - the result shows here when it finishes.";
   const pollFailed = (err: unknown) => {
     failedPolls.current++;
     if (failedPolls.current >= 3) setSaveError(apiErrorMessage(err));
@@ -505,8 +508,14 @@ export default function SiteReportPage() {
         try {
           const res = await fetch(`/api/funnels/test/status?funnelId=${encodeURIComponent(id)}`);
           const body = await res.json();
-          if (!res.ok) throw new Error(res.status === 401 ? "Your session has expired. Please sign in again." : body.error);
           if (cancelled) return;
+          // Started from the local app, on a tester this site can't reach: wait quietly
+          if (body.testerOffline) {
+            pollWorked();
+            setTestMessages(prev => ({ ...prev, [id]: TESTER_ELSEWHERE }));
+            continue;
+          }
+          if (!res.ok) throw new Error(res.status === 401 ? "Your session has expired. Please sign in again." : body.error);
           pollWorked();
           if (body.funnel.test_status === "running") {
             if (body.message) setTestMessages(prev => ({ ...prev, [id]: body.message }));

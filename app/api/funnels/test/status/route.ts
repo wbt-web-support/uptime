@@ -29,9 +29,11 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(await syncFunnelTest(supabase, funnel));
   } catch (error: any) {
     console.error("Funnel test status error:", error);
+    // testerOffline: the test is running on a tester this site can't reach (started
+    // from the local app) - the page waits quietly instead of showing an error
     return NextResponse.json(
-      { error: apiErrorMessage(error) },
-      { status: 500 }
+      { error: apiErrorMessage(error), testerOffline: error?.code === "TESTER_OFFLINE" },
+      { status: error?.code === "TESTER_OFFLINE" ? 503 : 500 }
     );
   }
 }

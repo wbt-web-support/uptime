@@ -112,6 +112,9 @@ const NO_CLIENT_LABEL = "No client";
 const SITE_FILTERS = ["passed", "failed", "untested"];
 // How often to ask the funnel tester how a walk is going
 const TEST_POLL_MS = 5000;
+// A status check answers testerOffline when the test runs on a tester this site
+// can't reach (started from the app on the computer running it)
+const TESTER_ELSEWHERE = "Running on the funnel tester on another computer - the result shows here when it finishes.";
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -994,6 +997,12 @@ export default function FunnelTestPage() {
       try {
         const res = await fetch(`/api/funnels/test/status?funnelId=${encodeURIComponent(id)}`);
         const data = await res.json();
+        // Started from the local app, on a tester this site can't reach: say so and stop
+        // following it (the result shows when the page is next loaded)
+        if (data.testerOffline) {
+          setTestMessages(prev => ({ ...prev, [id]: TESTER_ELSEWHERE }));
+          return null;
+        }
         if (!res.ok) {
           throw new Error(res.status === 401 ? "Your session has expired. Please sign in again." : data.error);
         }
@@ -1261,6 +1270,10 @@ export default function FunnelTestPage() {
       try {
         const res = await fetch(`/api/funnels/ui-check/status?funnelId=${encodeURIComponent(id)}`);
         const data = await res.json();
+        if (data.testerOffline) {
+          setUiMessages(prev => ({ ...prev, [id]: TESTER_ELSEWHERE }));
+          return null;
+        }
         if (!res.ok) {
           throw new Error(res.status === 401 ? "Your session has expired. Please sign in again." : data.error);
         }
