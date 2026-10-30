@@ -5,7 +5,12 @@ import { createClient } from "@/utils/supabase/client";
 import { signOutAction } from "@/app/actions";
 import StatusCard from "@/components/StatusCard";
 import DomainForm from "@/components/DomainForm";
-import DashboardHeader from "@/components/DashboardHeader";
+import dynamic from "next/dynamic";
+// Drawn in the browser only: its Sort / Status / Category menus get automatic IDs
+// that came out different on the server and in the browser ("A tree hydrated but
+// some attributes ... didn't match": id="radix-_R_..."). The page's data loads in
+// the browser anyway, so nothing is lost by not drawing the bar on the server.
+const DashboardHeader = dynamic(() => import("@/components/DashboardHeader"), { ssr: false });
 import StatsOverview from "@/components/StatsOverview";
 import DomainActions from "@/components/DomainActions";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -13,6 +18,11 @@ import { AlertTriangle, Clock, CheckCircle, RefreshCw, Activity, Shield, Globe, 
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { exportRows, domainToExportRow, type ExportFormat } from "@/utils/export";
+import { DOMAIN_CATEGORIES } from "@/utils/domain-categories";
+import { apiErrorMessage } from "@/utils/api-error";
+
+// Category-filter value that selects domains flagged as Dominate clients
+const DOMINATE_FILTER = "Dominate";
 
 export default function AdminPanel() {
   const [domains, setDomains] = useState<any[]>([]);
@@ -34,6 +44,7 @@ export default function AdminPanel() {
     total: number;
   }>({ successes: 0, failures: 0, total: 0 });
   const [checkingDomain, setCheckingDomain] = useState<string | null>(null);
+  const [checkProgress, setCheckProgress] = useState<{ done: number; total: number } | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(25);
   const [showAddForm, setShowAddForm] = useState(false);
@@ -58,8 +69,8 @@ export default function AdminPanel() {
       const { domains: domainsWithStatus } = await response.json();
       setDomains(domainsWithStatus || []);
     } catch (err: any) {
-      console.error("Error fetching data:", err);
-      setError(err.message);
+      console.error(`Error fetching data: ${apiErrorMessage(err)}`, err);
+      setError(apiErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -79,7 +90,7 @@ export default function AdminPanel() {
       setSuccess("Domain deleted successfully!");
       fetchDomains();
     } catch (error: any) {
-      setError(error.message);
+      setError(apiErrorMessage(error));
       setLoading(false);
     }
   };
@@ -89,6 +100,74 @@ export default function AdminPanel() {
     setSuccess(`Monitoring interval set to ${checkInterval}`);
   };
 
+  // Run the four checks for one domain at the same time. Resolves to the names of the
+  // checks that did not return 2xx (fetch itself does not throw on a 500); empty = all ran.
+  // A failed check means the check itself errored (e.g. WHOIS timed out), not that the
+  // site is down - a down site is a successful uptime check with status false.
+  const CHECK_NAMES = ['Uptime', 'SSL', 'WHOIS', 'IP'] as const;
+  // inBatch: part of "Check Selected" / "Check All" - an expiry date looked up in the
+  // last 7 days is kept rather than looked up again (a single check always looks it up)
+  const runDomainChecks = async (domain: { id: string; uptime_url: string; domain_name: string }, inBatch = false) => {
+    const post = (path: string, body: object) =>
+      fetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      }).then(res => res.ok);
+
+    const results = await Promise.allSettled([
+      post('/api/check/uptime', { domainId: domain.id, url: domain.uptime_url }),
+      post('/api/check/ssl', { domainId: domain.id, domain: domain.domain_name }),
+      post('/api/check/whois', { domainId: domain.id, domain: domain.domain_name, reuseRecent: inBatch }),
+      post('/api/check/ip', { domainId: domain.id, domain: domain.domain_name })
+    ]);
+    return CHECK_NAMES.filter((_, i) => {
+      const r = results[i];
+      return !(r.status === 'fulfilled' && r.value);
+    });
+  };
+
+  // Check many domains, a few at a time, so one slow site doesn't hold up the rest
+  // and we don't flood the server or the WHOIS API with hundreds of requests at once.
+  const CHECK_CONCURRENCY = 5;
+  const checkDomainsBatch = async (list: any[]) => {
+    let successes = 0;
+    let failures = 0;
+    const failedByCheck: Record<string, number> = {};
+    let next = 0;
+    setCheckProgress({ done: 0, total: list.length });
+
+    const worker = async () => {
+      while (next < list.length) {
+        const domain = list[next++];
+        try {
+          const failed = await runDomainChecks(domain, true);
+          if (failed.length === 0) successes++;
+          else failures++;
+          failed.forEach(name => { failedByCheck[name] = (failedByCheck[name] || 0) + 1; });
+        } catch (err) {
+          failures++;
+          console.error(`Error checking domain ${domain.domain_name}:`, err);
+        }
+        setCheckProgress(p => p && { ...p, done: p.done + 1 });
+      }
+    };
+
+    await Promise.all(Array.from({ length: Math.min(CHECK_CONCURRENCY, list.length) }, worker));
+    return { successes, failures, failedByCheck };
+  };
+
+  // e.g. "150 domains fully checked. 32 had a check that errored: WHOIS 31, SSL 9, IP 9"
+  const describeBatch = ({ successes, failures, failedByCheck }: Awaited<ReturnType<typeof checkDomainsBatch>>) => {
+    const done = `${successes} ${successes === 1 ? 'domain' : 'domains'} fully checked`;
+    if (failures === 0) return `${done}.`;
+    const breakdown = CHECK_NAMES
+      .filter(name => failedByCheck[name])
+      .map(name => `${name} ${failedByCheck[name]}`)
+      .join(', ');
+    return `${done}. ${failures} had a check that errored${breakdown ? `: ${breakdown}` : ''} (the site itself may still be up).`;
+  };
+
   const checkAllDomains = async () => {
     if (domains.length === 0) return;
 
@@ -96,63 +175,24 @@ export default function AdminPanel() {
     setSuccess(""); // Clear any previous messages
     setError("");
 
-    let successes = 0;
-    let failures = 0;
-
     try {
-      // Process each domain
-      for (const domain of domains) {
-        try {
-          // Check uptime
-          await fetch('/api/check/uptime', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ domainId: domain.id, url: domain.uptime_url })
-          });
-
-          // Check SSL
-          await fetch('/api/check/ssl', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ domainId: domain.id, domain: domain.domain_name })
-          });
-
-          // Check domain expiry - an expiry date looked up in the last 7 days is kept
-          // rather than looked up again (checking ~200 domains hits the lookup limits)
-          await fetch('/api/check/whois', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ domainId: domain.id, domain: domain.domain_name, reuseRecent: true })
-          });
-
-          // Check IP records
-          await fetch('/api/check/ip', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ domainId: domain.id, domain: domain.domain_name })
-          });
-
-          successes++;
-        } catch (err) {
-          failures++;
-          console.error(`Error checking domain ${domain.domain_name}:`, err);
-        }
-      }
+      const batch = await checkDomainsBatch(domains);
 
       // Update stats and fetch fresh data
       setCheckResults({
-        successes,
-        failures,
+        successes: batch.successes,
+        failures: batch.failures,
         total: domains.length
       });
 
-      setSuccess(`Domain checks completed: ${successes} successful, ${failures} failed`);
+      setSuccess(describeBatch(batch));
       fetchDomains(); // Refresh data
 
     } catch (err: any) {
       setError("Error during batch domain check: " + err.message);
     } finally {
       setCheckingAll(false);
+      setCheckProgress(null);
     }
   };
 
@@ -204,11 +244,12 @@ export default function AdminPanel() {
     return shortNames[category] || category;
   };
 
-  // Get all unique categories from domains
-  const categories = ["all", ...Array.from(new Set(domains
-    .filter(domain => domain.category)
-    .map(domain => domain.category)
-  ))];
+  // Every category, plus any other one a website has. "Dominate" is not a category but a
+  // separate flag (is_dominate), listed here so it can be filtered on like one.
+  const categories = ["all", DOMINATE_FILTER, ...Array.from(new Set([
+    ...DOMAIN_CATEGORIES,
+    ...domains.filter(domain => domain.category).map(domain => domain.category),
+  ]))];
 
   // Filter and sort domains with memoization for performance
   const filteredDomains = useMemo(() => {
@@ -228,7 +269,7 @@ export default function AdminPanel() {
 
       const matchesCategory =
         categoryFilter === 'all' ||
-        domain.category === categoryFilter;
+        (categoryFilter === DOMINATE_FILTER ? domain.is_dominate === true : domain.category === categoryFilter);
 
       return matchesSearch && matchesStatus && matchesCategory;
     }).sort((a, b) => {
@@ -315,35 +356,14 @@ export default function AdminPanel() {
     try {
       setSuccess(`Checking domain: ${domain_name}...`);
 
-      // Check uptime
-      await fetch('/api/check/uptime', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ domainId: id, url })
-      });
+      const failed = await runDomainChecks({ id, uptime_url: url, domain_name });
 
-      // Check SSL
-      await fetch('/api/check/ssl', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ domainId: id, domain: domain_name })
-      });
-
-      // Check domain expiry
-      await fetch('/api/check/whois', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ domainId: id, domain: domain_name })
-      });
-
-      // Check IP records
-      await fetch('/api/check/ip', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ domainId: id, domain: domain_name })
-      });
-
-      setSuccess(`Domain ${domain_name} checked successfully!`);
+      if (failed.length === 0) {
+        setSuccess(`Domain ${domain_name} checked successfully!`);
+      } else {
+        setSuccess("");
+        setError(`${failed.join(", ")} check${failed.length === 1 ? "" : "s"} errored for ${domain_name}`);
+      }
       fetchDomains(); // Refresh data
     } catch (err: any) {
       setError(`Error checking domain ${domain_name}: ${err.message}`);
@@ -394,7 +414,7 @@ export default function AdminPanel() {
       setSelectAll(false);
       fetchDomains();
     } catch (error: any) {
-      setError(error.message);
+      setError(apiErrorMessage(error));
       setLoading(false);
     }
   };
@@ -411,61 +431,22 @@ export default function AdminPanel() {
   const checkSelectedDomains = async () => {
     if (selectedDomains.length === 0) return;
 
-    setLoading(true);
+    // Keep the table on screen while checking (checkingAll suppresses the loading skeleton)
+    setCheckingAll(true);
+    setError("");
     setSuccess(`Checking ${selectedDomains.length} selected domains...`);
 
     try {
-      let successes = 0;
-      let failures = 0;
-
       // Get the selected domains from the full domains list
       const domainsToCheck = domains.filter(domain => selectedDomains.includes(domain.id));
 
-      // Process each selected domain
-      for (const domain of domainsToCheck) {
-        try {
-          // Check uptime
-          await fetch('/api/check/uptime', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ domainId: domain.id, url: domain.uptime_url })
-          });
-
-          // Check SSL
-          await fetch('/api/check/ssl', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ domainId: domain.id, domain: domain.domain_name })
-          });
-
-          // Check domain expiry - an expiry date looked up in the last 7 days is kept
-          // rather than looked up again (checking ~200 domains hits the lookup limits)
-          await fetch('/api/check/whois', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ domainId: domain.id, domain: domain.domain_name, reuseRecent: true })
-          });
-
-          // Check IP records
-          await fetch('/api/check/ip', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ domainId: domain.id, domain: domain.domain_name })
-          });
-
-          successes++;
-        } catch (err) {
-          failures++;
-          console.error(`Error checking domain ${domain.domain_name}:`, err);
-        }
-      }
-
-      setSuccess(`Domain checks completed: ${successes} successful, ${failures} failed`);
+      setSuccess(describeBatch(await checkDomainsBatch(domainsToCheck)));
       fetchDomains(); // Refresh data
     } catch (error: any) {
       setError(`Error during batch domain check: ${error.message}`);
     } finally {
-      setLoading(false);
+      setCheckingAll(false);
+      setCheckProgress(null);
     }
   };
 
@@ -490,7 +471,7 @@ export default function AdminPanel() {
 
       fetchDomains(); // Refresh data
     } catch (error: any) {
-      setError(error.message);
+      setError(apiErrorMessage(error));
       setLoading(false);
     } finally {
       setLoading(false);
@@ -506,14 +487,16 @@ export default function AdminPanel() {
     domainExpiring: domains.filter(d => d.domain_expiry?.days_remaining !== undefined && d.domain_expiry.days_remaining <= 30).length
   };
 
-  // Calculate category counts
-  const categoryStats: Record<string, number> = {
-    all: domains.length
-  };
+  // Calculate category counts (0 for a category no website has)
+  const categoryStats: Record<string, number> = Object.fromEntries(categories.map(c => [c, 0]));
+  categoryStats.all = domains.length;
 
   domains.forEach(domain => {
     if (domain.category) {
       categoryStats[domain.category] = (categoryStats[domain.category] || 0) + 1;
+    }
+    if (domain.is_dominate) {
+      categoryStats[DOMINATE_FILTER] = (categoryStats[DOMINATE_FILTER] || 0) + 1;
     }
   });
 
@@ -636,10 +619,10 @@ export default function AdminPanel() {
               <button
                 onClick={checkSelectedDomains}
                 className="btn btn-secondary flex items-center gap-2"
-                disabled={loading}
+                disabled={loading || checkingAll}
               >
-                <RefreshCw size={16} />
-                Check Selected
+                <RefreshCw size={16} className={checkingAll ? "animate-spin" : ""} />
+                {checkProgress ? `Checking ${checkProgress.done}/${checkProgress.total}` : "Check Selected"}
               </button>
               <button
                 onClick={deleteSelectedDomains}
@@ -849,6 +832,11 @@ export default function AdminPanel() {
                         </span>
                       ) : (
                         <span className="text-muted-foreground text-xs">Not set</span>
+                      )}
+                      {domain.is_dominate && (
+                        <span className="ml-1 inline-flex items-center px-2.5 text-nowrap py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/20 dark:text-amber-400" title="Dominate package client">
+                          Dominate
+                        </span>
                       )}
                     </td>
                     <td className="p-3">

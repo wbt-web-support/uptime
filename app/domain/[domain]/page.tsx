@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { use, useEffect, useState } from "react";
 import { createClient } from "@/utils/supabase/client";
 import EmbedInfo from "@/components/EmbedInfo";
 import Link from "next/link";
@@ -9,10 +9,11 @@ import { Card } from "@/components/ui/card";
 import { ChevronLeft, ExternalLink, Globe, Lock, Clock, CheckCircle, XCircle, Image as ImageIcon, Server, Tag, ListFilter } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 
+// Next.js passes route params as a Promise; it's unwrapped with React's use()
 interface DomainPageProps {
-  params: {
+  params: Promise<{
     domain: string;
-  };
+  }>;
 }
 
 // Define interface for graph data
@@ -24,7 +25,7 @@ interface GraphDataPoint {
 }
 
 export default function DomainPage({ params }: DomainPageProps) {
-  const { domain } = params;
+  const { domain } = use(params);
   const [loading, setLoading] = useState(true);
   const [domainData, setDomainData] = useState<any>(null);
   const [error, setError] = useState("");

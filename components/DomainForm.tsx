@@ -238,7 +238,7 @@ export default function DomainForm({ onSuccess, onSave, isOpen: externalIsOpen, 
                   <option value="Live Website Temporary Suspended">Live Website Temporary Suspended</option>
                   <option value="Migration Done">Migration Done</option>
                   <option value="Migration Pending">Migration Pending</option>
-                  <option value="Sub Domain">Sub Domain</option>
+                  <option value="Subdomain">Subdomain</option>
                 </select>
               </div>
             </div>

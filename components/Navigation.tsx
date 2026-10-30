@@ -3,10 +3,11 @@
 import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Menu, X, ChevronsUp, Shield, Home, User, Bell, Gauge, Zap } from "lucide-react"; 
+import { Menu, X, ChevronsUp, Shield, Home, User, Bell, Gauge, Zap, Filter } from "lucide-react"; 
 import { createClient } from "@/utils/supabase/client";
 import { cn } from "@/lib/utils";
 import { signOutAction } from "@/app/actions";
+import { ThemeSwitcher } from "@/components/theme-switcher";
 
 export default function Navigation() {
   const [isOpen, setIsOpen] = useState(false);
@@ -59,6 +60,7 @@ export default function Navigation() {
     { name: "Home", href: "/", icon: Home, requiredAuth: false },
     { name: "Speed Test", href: "/speed-test", icon: Gauge, requiredAuth: true },
     { name: "GTmetrix", href: "/gtmetrix", icon: Zap, requiredAuth: true },
+    { name: "Funnel Test", href: "/funnel-test", icon: Filter, requiredAuth: true },
     { name: "Admin", href: "/admin", icon: Shield, requiredAuth: true },
     { name: "Notifications", href: "/admin/notifications", icon: Bell, requiredAuth: true },
   ];
@@ -97,6 +99,8 @@ export default function Navigation() {
               );
             })}
 
+            <ThemeSwitcher />
+
             {user ? (
               <div className="flex items-center space-x-2">
                 <form action={signOutAction}>
@@ -116,7 +120,8 @@ export default function Navigation() {
           </nav>
 
           {/* Mobile menu button */}
-          <div className="md:hidden">
+          <div className="md:hidden flex items-center gap-1">
+            <ThemeSwitcher />
             <button
               onClick={() => setIsOpen(!isOpen)}
               className="inline-flex items-center justify-center p-2 rounded-md text-foreground hover:text-brand hover:bg-secondary transition-colors"

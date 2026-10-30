@@ -3,6 +3,7 @@ import { createClient } from "@/utils/supabase/server";
 import { checkDomainUptime, checkSSLExpiry, checkDomainExpiry, checkDomainIpRecords } from "@/utils/monitoring";
 import { fetchLatestPerDomain } from "@/utils/latest-records";
 import { sendAlert } from "@/utils/email";
+import { apiErrorMessage } from "@/utils/api-error";
 
 // Rate limit the API to prevent abuse
 const RATE_LIMIT_SECONDS = 300; // 5 minutes
@@ -200,7 +201,7 @@ export async function GET(request: NextRequest) {
     console.error("Monitoring error:", error);
     
     return NextResponse.json(
-      { error: error.message || "Internal server error" },
+      { error: apiErrorMessage(error) },
       { status: 500 }
     );
   }

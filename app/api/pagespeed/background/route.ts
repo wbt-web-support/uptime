@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { createClient } from "@/utils/supabase/server";
 import { createAdminClient, normalizeUrl, runAndSavePageSpeed, type Strategy } from "@/utils/pagespeed";
+import { apiErrorMessage } from "@/utils/api-error";
 
 // Background PageSpeed test endpoint.
 //
@@ -82,6 +83,6 @@ export async function POST(request: NextRequest) {
     });
   } catch (error: any) {
     console.error("Background PageSpeed API route error:", error);
-    return NextResponse.json({ error: error.message || "Internal server error" }, { status: 500 });
+    return NextResponse.json({ error: apiErrorMessage(error) }, { status: 500 });
   }
 }

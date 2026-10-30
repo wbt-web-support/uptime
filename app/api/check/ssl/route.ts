@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/utils/supabase/server";
 import { checkSSLExpiry } from "@/utils/monitoring";
 import { sendAlert } from "@/utils/email";
+import { apiErrorMessage } from "@/utils/api-error";
 
 export async function POST(request: NextRequest) {
   try {
@@ -67,7 +68,7 @@ export async function POST(request: NextRequest) {
   } catch (error: any) {
     console.error("SSL check error:", error);
     return NextResponse.json(
-      { error: error.message || "Internal server error" },
+      { error: apiErrorMessage(error) },
       { status: 500 }
     );
   }

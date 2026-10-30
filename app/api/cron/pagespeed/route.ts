@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient, getDomainTargets, runAndSavePageSpeed, type Strategy } from "@/utils/pagespeed";
+import { apiErrorMessage } from "@/utils/api-error";
 
 // Scheduled PageSpeed batch runner.
 //
@@ -187,7 +188,7 @@ async function handle(request: NextRequest) {
     return NextResponse.json(summary);
   } catch (err: any) {
     console.error("[cron/pagespeed] error:", err);
-    return NextResponse.json({ error: err.message || "Internal server error" }, { status: 500 });
+    return NextResponse.json({ error: apiErrorMessage(err) }, { status: 500 });
   }
 }
 

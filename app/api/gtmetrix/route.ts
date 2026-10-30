@@ -7,6 +7,7 @@ import {
   runAndSaveGTmetrix,
   GTMETRIX_LOCATION,
 } from "@/utils/gtmetrix";
+import { apiErrorMessage } from "@/utils/api-error";
 
 // On-demand GTmetrix test endpoint. One URL per request — GTmetrix credits are
 // paid, so this is deliberately never called in bulk or from the cron. Each run
@@ -74,7 +75,7 @@ export async function POST(request: NextRequest) {
     });
   } catch (error: any) {
     console.error("GTmetrix API route error:", error);
-    return NextResponse.json({ error: error.message || "Internal server error" }, { status: 500 });
+    return NextResponse.json({ error: apiErrorMessage(error) }, { status: 500 });
   }
 }
 

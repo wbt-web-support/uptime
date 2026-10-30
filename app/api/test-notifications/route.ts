@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/utils/supabase/server";
 import { sendAlert } from "@/utils/email";
+import { apiErrorMessage } from "@/utils/api-error";
 
 // This endpoint allows testing of the notification system
 export async function POST(request: NextRequest) {
@@ -90,7 +91,7 @@ export async function POST(request: NextRequest) {
   } catch (error: any) {
     console.error("Error sending test notification:", error);
     return NextResponse.json(
-      { error: error.message || "Internal server error" },
+      { error: apiErrorMessage(error) },
       { status: 500 }
     );
   }

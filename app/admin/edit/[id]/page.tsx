@@ -20,6 +20,7 @@ export default function EditDomain() {
     display_name: "",
     uptime_url: "",
     category: "none",
+    is_dominate: false,
   });
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -76,6 +77,7 @@ export default function EditDomain() {
             display_name: data.display_name || "",
             uptime_url: data.uptime_url || "",
             category: data.category || "none",
+            is_dominate: data.is_dominate === true,
           });
         }
       } catch (error: any) {
@@ -164,6 +166,9 @@ export default function EditDomain() {
           display_name: formData.display_name || null,
           uptime_url: formData.uptime_url,
           category: formData.category,
+          // Only send the flag once the is_dominate column exists, so saving still
+          // works on a database that hasn't run add_dominate_column.sql yet.
+          ...(domain && 'is_dominate' in domain ? { is_dominate: formData.is_dominate } : {}),
         })
         .eq("id", domainId);
 
@@ -432,6 +437,16 @@ export default function EditDomain() {
                   </select>
                 </div>
               </div>
+
+              <label className="flex items-center gap-2 text-sm font-medium text-foreground cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={formData.is_dominate}
+                  onChange={(e) => setFormData(prev => ({ ...prev, is_dominate: e.target.checked }))}
+                  className="h-4 w-4 accent-brand"
+                />
+                Dominate client
+              </label>
 
               {/* Category Management Section */}
               <div className="border-t pt-4 mt-4">
