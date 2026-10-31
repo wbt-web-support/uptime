@@ -7,14 +7,6 @@
     {
       "path": "/api/cron/pagespeed",
       "schedule": "0 * * * *"
-    },
-    {
-      "path": "/api/cron/funnels",
-      "schedule": "*/5 * * * *"
-    },
-    {
-      "path": "/api/cron/funnel-health",
-      "schedule": "*/5 * * * *"
     }
   ]
 }
