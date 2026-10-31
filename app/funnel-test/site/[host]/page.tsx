@@ -216,7 +216,6 @@ export default function SiteReportPage() {
   const [history, setHistory] = useState<Record<string, HistoryEntry[]>>({});
   // Latest daily no-submit check per funnel
   const [health, setHealth] = useState<Record<string, HealthResult>>({});
-  const [checkingHealth, setCheckingHealth] = useState(false);
   // Button lists of older landing page checks, by report id (see load)
   const [oldQuoteButtons, setOldQuoteButtons] = useState<Record<string, NonNullable<UiResult["quote_buttons"]>>>({});
   const [clientName, setClientName] = useState<string | null>(null);
@@ -266,29 +265,6 @@ export default function SiteReportPage() {
     if (updateError) {
       setFunnels(prev => prev?.map(x => (x.id === f.id ? { ...x, ui_results: f.ui_results } : x)) ?? prev);
       setSaveError(`Couldn't save: ${updateError.message}`);
-    }
-  };
-
-  // Run the daily no-submit check now on this website's quote funnels (nothing is
-  // filled in or sent), then show the results
-  const runHealthCheck = async () => {
-    const quotePages = (funnels ?? []).filter(f => f.test_enabled !== false && new URL(f.url).pathname.replace(/\/+$/, "") !== "");
-    if (quotePages.length === 0) return;
-    setCheckingHealth(true);
-    setSaveError("");
-    try {
-      const res = await fetch("/api/funnels/health-check", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ funnelIds: quotePages.map(f => f.id) }),
-      });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error || "The daily check couldn't run");
-      setHealth(prev => ({ ...prev, ...body.results }));
-    } catch (err: any) {
-      setSaveError(err.message);
-    } finally {
-      setCheckingHealth(false);
     }
   };
 
@@ -645,11 +621,6 @@ export default function SiteReportPage() {
   // Summary card: spelling & grammar
   const grammar = uiSource?.ui_results?.desktop?.grammar_issues;
   const grammarToFix = Array.isArray(grammar) ? grammar.filter(g => g.status !== "fixed").length : 0;
-  // Daily checks that couldn't run (e.g. no funnel tester connected to this site)
-  const healthError = Object.values(health)
-    .map(h => ("error" in h ? (h as { error: string }).error : null))
-    .find((e): e is string => !!e);
-
   // One device's problems, grouped: buttons failing the same way become one issue
   // with the products as chips
   const issuesOf = (r: DeviceResult): Issue[] => {
@@ -766,26 +737,8 @@ export default function SiteReportPage() {
             {lastTested && <span>Last tested {shortDate(lastTested)}</span>}
           </div>
         </div>
-        <button
-          onClick={runHealthCheck}
-          disabled={checkingHealth}
-          title="Opens each quote page and checks it without filling in or sending anything: page, quote form, GTM, postcode lookup, Stripe key, phone links"
-          className="inline-flex h-10 shrink-0 items-center gap-2 rounded-md bg-brand px-4 text-sm font-semibold text-white shadow-sm transition-opacity hover:opacity-90 disabled:opacity-60"
-        >
-          <RefreshCw className={`h-4 w-4 ${checkingHealth ? "animate-spin" : ""}`} />
-          {checkingHealth ? "Checking… (about 30s per funnel)" : "Run daily check now"}
-        </button>
       </div>
 
-      {healthError && (
-        <div className="mb-5 flex items-start gap-2.5 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800/70 dark:bg-amber-950/30 dark:text-amber-200">
-          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-          <p>
-            <span className="font-semibold">Scheduled daily checks can&apos;t run. </span>
-            {healthError}
-          </p>
-        </div>
-      )}
       {saveError && (
         <div className="mb-5 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-400">
           <AlertCircle className="h-4 w-4 shrink-0" /> {saveError}
