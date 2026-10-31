@@ -8,10 +8,10 @@
     "start": "tsx src/server.ts"
   },
   "dependencies": {
-    "cors": "2.8.5",
-    "express": "4.21.1",
-    "playwright": "1.48.2",
-    "tsx": "4.19.2"
+    "cors": "2.8.6",
+    "express": "4.22.3",
+    "playwright": "1.63.0",
+    "tsx": "4.23.15"
   },
   "devDependencies": {
     "@types/cors": "2.8.17",
