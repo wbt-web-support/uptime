@@ -107,9 +107,8 @@ interface DomainOption {
 // Same concurrency as the admin "Check Selected" batch
 const CHECK_CONCURRENCY = 5;
 const NO_CLIENT = "none";
-const NO_CLIENT_LABEL = "No client";
 // Result filters that pick whole websites by their overall test status
-const SITE_FILTERS = ["passed", "failed", "untested"];
+const SITE_FILTERS = ["tested", "untested", "passed", "failed"];
 // How often to ask the funnel tester how a walk is going
 const TEST_POLL_MS = 5000;
 // A status check answers testerOffline when the test runs on a tester this site
@@ -637,7 +636,6 @@ export default function FunnelTestPage() {
   const [success, setSuccess] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
-  const [clientFilter, setClientFilter] = useState("all");
   // Search and filters survive a refresh (in this browser) until they're cleared.
   // Restored after the first render so the server and browser render the same page.
   const [filtersRestored, setFiltersRestored] = useState(false);
@@ -645,17 +643,16 @@ export default function FunnelTestPage() {
     try {
       const saved = JSON.parse(localStorage.getItem("funnel-test-filters") ?? "{}");
       if (typeof saved.search === "string") setSearchQuery(saved.search);
-      if (typeof saved.status === "string") setStatusFilter(saved.status);
-      if (typeof saved.client === "string") setClientFilter(saved.client);
+      if (typeof saved.status === "string" && (saved.status === "all" || SITE_FILTERS.includes(saved.status))) setStatusFilter(saved.status);
     } catch {}
     setFiltersRestored(true);
   }, []);
   useEffect(() => {
     if (!filtersRestored) return;
     try {
-      localStorage.setItem("funnel-test-filters", JSON.stringify({ search: searchQuery, status: statusFilter, client: clientFilter }));
+      localStorage.setItem("funnel-test-filters", JSON.stringify({ search: searchQuery, status: statusFilter }));
     } catch {}
-  }, [filtersRestored, searchQuery, statusFilter, clientFilter]);
+  }, [filtersRestored, searchQuery, statusFilter]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [showAddForm, setShowAddForm] = useState(false);
   const [form, setForm] = useState({ name: "", url: "", domain_id: NO_CLIENT });
@@ -673,18 +670,8 @@ export default function FunnelTestPage() {
     setDeviceChoiceState(choice);
     try { localStorage.setItem("funnel-test-devices", choice); } catch {}
   };
-  // Which device's results the list shows (tests always run on both); remembered here
-  const [resultView, setResultViewState] = useState<DeviceChoice>("both");
-  const setResultView = (view: DeviceChoice) => {
-    setResultViewState(view);
-    try { localStorage.setItem("funnel-test-view", view); } catch {}
-  };
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem("funnel-test-view");
-      if (saved === "both" || saved === "desktop" || saved === "mobile") setResultViewState(saved);
-    } catch {}
-  }, []);
+  // The list shows desktop and mobile results together (tests always run on both)
+  const resultView: DeviceChoice = "both";
   // The device picker is hidden for now, so tests always run on both - a choice
   // saved earlier must not silently narrow them
   const SHOW_DEVICE_CHOICE = false;
@@ -817,22 +804,11 @@ export default function FunnelTestPage() {
         funnel.url.toLowerCase().includes(q) ||
         (client !== null && client.toLowerCase().includes(q));
 
-      const matchesStatus =
-        statusFilter === "all" ||
-        (statusFilter === "up" && funnel.last_status === true) ||
-        (statusFilter === "down" && funnel.last_status === false) ||
-        (statusFilter === "unchecked" && funnel.last_status === null) ||
-        // Test results filter whole websites (see visibleSites), not single funnels
-        SITE_FILTERS.includes(statusFilter);
-
-      const matchesClient =
-        clientFilter === "all" ||
-        (clientFilter === NO_CLIENT_LABEL ? client === null : client === clientFilter);
-
-      return matchesSearch && matchesStatus && matchesClient;
+      // (The status filter picks whole websites - see visibleSites)
+      return matchesSearch;
     }).sort((a, b) => a.name.localeCompare(b.name));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [funnels, domainById, searchQuery, statusFilter, clientFilter]);
+  }, [funnels, domainById, searchQuery, statusFilter]);
 
   const toggleExpand = (id: string) =>
     setExpanded(prev => {
@@ -844,16 +820,13 @@ export default function FunnelTestPage() {
 
   // The test-result ones count websites, like the summary cards above the list
   const statusFilters: { id: string; name: string; count?: number }[] = [
-    { id: "all", name: "All results", count: funnels.length },
-    { id: "passed", name: "All working" },
-    { id: "failed", name: "Problems" },
+    { id: "all", name: "All websites" },
+    { id: "tested", name: "Tested" },
     { id: "untested", name: "Not tested yet" },
-    { id: "up", name: "Page up", count: funnels.filter(f => f.last_status === true).length },
-    { id: "down", name: "Page down", count: funnels.filter(f => f.last_status === false).length },
-    { id: "unchecked", name: "Page not checked", count: funnels.filter(f => f.last_status === null).length },
+    { id: "passed", name: "Working" },
+    { id: "failed", name: "Problems" },
   ];
 
-  const clientOptions = Array.from(new Set(funnels.map(f => clientName(f) ?? NO_CLIENT_LABEL))).sort();
 
   const addFunnel = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1715,12 +1688,21 @@ export default function FunnelTestPage() {
   // Added on this page by name and landing page, rather than a monitored client
   const isManualSite = (g: SiteGroup) => g.funnels.every(f => !f.domain_id);
 
+  // Tested = at least one of its funnels has a result; Not tested yet = none has
+  const everTested = (s: { toTest: Funnel[]; untested: number }) => s.toTest.length > 0 && s.untested < s.toTest.length;
+
   // The websites the list shows: the search/client filters, then the result filter
   // on each whole website - matching the summary cards
   const visibleSites = siteGroups.filter(g => {
     if (!SITE_FILTERS.includes(statusFilter)) return true;
     const s = siteSummary(g);
-    return statusFilter === "passed" ? s.state === "passed" : statusFilter === "failed" ? s.state === "failed" : s.untested > 0;
+    return statusFilter === "passed"
+      ? s.state === "passed"
+      : statusFilter === "failed"
+        ? s.state === "failed"
+        : statusFilter === "tested"
+          ? everTested(s)
+          : !everTested(s);
   });
 
   // "Test next 5 sites": the sites in the list never tested, then the ones tested
@@ -1800,8 +1782,8 @@ export default function FunnelTestPage() {
     const reportHref = `/funnel-test/site/${encodeURIComponent(g.key)}`;
 
     return (
-      <tr key={g.key} className="align-top hover:bg-muted/20">
-        <td className="px-4 py-4">
+      <tr key={g.key} className="align-middle hover:bg-muted/20">
+        <td className="px-4 py-3.5">
           <div className="flex flex-wrap items-center gap-2">
             <Link href={reportHref} className="text-base font-medium hover:text-brand" title="Open the full report for this website">
               {g.label}
@@ -1815,44 +1797,46 @@ export default function FunnelTestPage() {
               </span>
             )}
           </div>
+          <div className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
           <a
             href={g.url}
             target="_blank"
             rel="noopener noreferrer"
-            className="mt-1 flex items-center gap-1 text-xs text-muted-foreground hover:text-brand"
+            className="flex shrink-0 items-center gap-1 hover:text-brand"
           >
             <Globe className="h-3.5 w-3.5" />
             {g.key}
             <ExternalLink className="h-3 w-3" />
           </a>
           {allFunnels.length > 1 && (
-            <div
-              className="mt-1 max-w-[260px] truncate text-xs text-muted-foreground"
+            <span
+              className="max-w-[320px] truncate before:mr-1.5 before:content-['·']"
               title={`Tested: ${toTest.map(serviceLabel).join(", ") || "none"}${switchedOff ? `\nSwitched off: ${allFunnels.filter(f => f.test_enabled === false).map(serviceLabel).join(", ")}` : ""}`}
             >
               {switchedOff ? `${total} of ${allFunnels.length} funnels tested` : `${total} funnels`}: {toTest.map(serviceLabel).join(", ") || "none"}
-            </div>
+            </span>
           )}
+          </div>
         </td>
-        <td className="px-4 py-4">
+        <td className="px-4 py-3.5">
           <span className={`inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ${status.cls}`}>
-            {state === "running" && <RefreshCw className="h-3 w-3 animate-spin" />}
+            {state === "running" ? <RefreshCw className="h-3 w-3 animate-spin" /> : <span className="h-1.5 w-1.5 rounded-full bg-current" />}
             {status.text}
           </span>
           {/* While testing, the "Testing…" badge alone; the step-by-step log isn't shown here */}
           {state !== "running" && reason ? (
-            <div className="mt-1.5 max-w-[240px] text-xs text-red-700 dark:text-red-400" title={reason}>
+            <div className="mt-1 max-w-[170px] truncate text-xs text-red-700 dark:text-red-400" title={reason}>
               {!single && firstFailing ? `${serviceLabel(firstFailing)}: ` : ""}
               {reason}
             </div>
           ) : null}
         </td>
         {STAGES.map(s => (
-          <td key={s.key} className="px-2 py-4 text-center">
+          <td key={s.key} className="px-2 py-3.5 text-center">
             <StageCell state={stages?.[s.key] ?? null} label={s.label} />
           </td>
         ))}
-        <td className="px-4 py-4">
+        <td className="px-4 py-3.5">
           {lastTested ? (
             <div className="flex items-start gap-2">
               <Clock className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
@@ -1864,11 +1848,15 @@ export default function FunnelTestPage() {
               </div>
             </div>
           ) : (
-            <span className="text-xs text-muted-foreground">Never</span>
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <Clock className="h-4 w-4 shrink-0" />
+              <span className="whitespace-nowrap">Never</span>
+            </div>
           )}
         </td>
-        {/* Run test: just the icon - the column header says what it does */}
-        <td className="px-2 py-4 text-center">
+        {/* Run test (just the icon) and the full report, side by side */}
+        <td className="px-4 py-3.5">
+          <div className="flex items-center justify-end gap-2">
           {running ? (
             <Button
               size="icon"
@@ -1923,11 +1911,10 @@ export default function FunnelTestPage() {
               <RefreshCw className="h-4 w-4" />
             </Button>
           )}
-        </td>
-        <td className="px-4 py-4 text-right">
-          <Link href={reportHref} className="btn-outline inline-flex whitespace-nowrap py-1.5 text-xs">
+          <Link href={reportHref} className="btn-outline inline-flex h-8 items-center whitespace-nowrap py-0 text-xs">
             See Details
           </Link>
+          </div>
         </td>
       </tr>
     );
@@ -1939,16 +1926,16 @@ export default function FunnelTestPage() {
       <table className="w-full text-sm">
         <thead>
           <tr className="bg-muted/50">
+            {/* The Website column takes the spare width; the rest fit their content */}
             <th className="px-4 py-3 text-left font-medium">Website</th>
-            <th className="px-4 py-3 text-left font-medium">Status</th>
+            <th className="w-px whitespace-nowrap px-4 py-3 text-left font-medium">Status</th>
             {STAGES.map(s => (
-              <th key={s.key} className="px-2 py-3 text-center font-medium" title={s.label}>
+              <th key={s.key} className="w-px whitespace-nowrap px-3 py-3 text-center font-medium" title={s.label}>
                 {s.short}
               </th>
             ))}
-            <th className="px-4 py-3 text-left font-medium">Last Test</th>
-            <th className="px-2 py-3 text-center font-medium">Run test</th>
-            <th className="px-4 py-3 text-right font-medium">Actions</th>
+            <th className="w-px whitespace-nowrap px-4 py-3 text-left font-medium">Last Test</th>
+            <th className="w-px whitespace-nowrap px-4 py-3 text-right font-medium">Actions</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-border">{sites.map(renderSiteGroup)}</tbody>
@@ -1962,7 +1949,8 @@ export default function FunnelTestPage() {
     all: allSiteGroups.length,
     passed: allSummaries.filter(s => s.state === "passed").length,
     failed: allSummaries.filter(s => s.state === "failed").length,
-    untested: allSummaries.filter(s => s.untested > 0).length,
+    untested: allSummaries.filter(s => !everTested(s)).length,
+    tested: allSummaries.filter(everTested).length,
   };
 
   return (
@@ -2004,36 +1992,10 @@ export default function FunnelTestPage() {
             <SelectContent>
               {statusFilters.map(f => (
                 <SelectItem key={f.id} value={f.id}>
-                  {f.id === "all" ? "Status: All" : f.name}
+                  {f.name}
                   {siteCounts[f.id] !== undefined ? ` (${siteCounts[f.id]})` : f.count !== undefined ? ` (${f.count})` : ""}
                 </SelectItem>
               ))}
-            </SelectContent>
-          </Select>
-          {clientOptions.length > 1 && (
-            <Select value={clientFilter} onValueChange={setClientFilter}>
-              <SelectTrigger className="h-9 w-full sm:w-44">
-                <SelectValue placeholder="Client" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Client: All</SelectItem>
-                {clientOptions.map(c => (
-                  <SelectItem key={c} value={c}>
-                    {c}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
-          {/* Which device's results the table shows - tests always run on both */}
-          <Select value={resultView} onValueChange={v => setResultView(v as DeviceChoice)}>
-            <SelectTrigger className="h-9 w-full whitespace-nowrap sm:w-56" title="Which device's results the table shows. Tests always run on both.">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="both">Results: Desktop + Mobile</SelectItem>
-              <SelectItem value="desktop">Results: Desktop</SelectItem>
-              <SelectItem value="mobile">Results: Mobile</SelectItem>
             </SelectContent>
           </Select>
         </div>
