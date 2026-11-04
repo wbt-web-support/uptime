@@ -2170,6 +2170,30 @@ async function closeOpenModals(page: Page): Promise<void> {
   }
 }
 
+// The hidden "Skip to content" link for keyboard users is never a step in a quote.
+// Seen on Touch of Heat: while the form was loading the AI picked it, the address
+// became /boiler-quote/#main, and when the form reloaded itself after submit its
+// embed couldn't find the client for that address ("We could not load your quote
+// form"). Narrow on purpose: a form's own "Skip this step" must still be clickable.
+async function isSkipLink(frame: Frame, selector: string): Promise<boolean> {
+  return frame
+    .locator(selector)
+    .first()
+    .evaluate(
+      (el) => {
+        const link = el.closest("a");
+        if (!link || link.hash.length < 2 || link.pathname !== location.pathname) return false;
+        return (
+          /(^|\s)(skip-link|skiplink|skip-to-content)(\s|$)/i.test(link.className) ||
+          /^\s*skip\s+(to\s+)?(the\s+)?(main\s+)?(content|navigation)\b/i.test(link.textContent ?? "")
+        );
+      },
+      undefined,
+      { timeout: 1000 }
+    )
+    .catch(() => false);
+}
+
 // A click that timed out isn't the end: found via real testing on mobile that a
 // "Book Your E-Survey" link existed 6 times on the page (header, menu, sections),
 // the first was hidden behind the closed mobile menu, and the click waited on it
@@ -3487,6 +3511,43 @@ async function testSolarJourney(
  * however many pages it takes (upgrades -> checkout -> payment, etc.) up to
  * MAX_FINAL_ACTION_DEPTH, via the `depth` param.
  */
+/**
+ * A results page (/solar-products/?ref=N, /boiler-results/...) that opened but
+ * never drew anything. Seen on KJ Group solar, mobile: the address changed to the
+ * products page, the page stayed white (only the "Prefer to chat?" header), the
+ * walk counted it as "results page reached" and, with no buttons to find, reported
+ * the thank-you stage as working - while desktop found 11 buttons on the same page.
+ * Waits for real content, reloads once (the page is read by its ?ref=, so a reload
+ * sends nothing again), and returns false if it is still blank.
+ */
+async function waitForResultsContent(page: Page, log: (msg: string) => void, waitMs = 20000): Promise<boolean> {
+  const hasContent = async () => {
+    if (await isWbtSolarProductsPage(page)) return true;
+    const text = await page
+      .evaluate(() => (document.body?.innerText ?? "").replace(/\s+/g, " ").trim())
+      .catch(() => "");
+    // Buttons or links a visitor could use, beyond the header's phone link
+    const actions = await page
+      .locator("main button:visible, main a:visible, [class*='product' i] button:visible, [class*='product' i] a:visible, button:visible")
+      .count()
+      .catch(() => 0);
+    return text.length >= 200 && actions >= 1;
+  };
+  const waitFor = async (ms: number) => {
+    const until = Date.now() + ms;
+    while (Date.now() < until) {
+      if (await hasContent()) return true;
+      await page.waitForTimeout(1500);
+    }
+    return hasContent();
+  };
+  if (await waitFor(waitMs)) return true;
+  log(`the results page (${page.url()}) is still blank after ${Math.round(waitMs / 1000)}s - reloading it once`);
+  await page.reload({ waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => {});
+  await page.waitForLoadState("networkidle", { timeout: 8000 }).catch(() => {});
+  return waitFor(15000);
+}
+
 async function testFinalActionButtons(
   page: Page,
   screenshotDir: string,
@@ -4585,6 +4646,11 @@ async function applyActions(page: Page, plannedActions: PlannedAction[]): Promis
           break;
         }
         case "click":
+          if (await isSkipLink(frame, selector)) {
+            notes.push(`didn't press "${selector}" - it's the page's "Skip to content" link, not part of the quote. Waited for the page to finish loading instead`);
+            await page.waitForTimeout(3000);
+            break;
+          }
           try {
             // The model sometimes names a GROUP of buttons rather than the button
             // (seen on Thermwise: ".wp-block-kadence-advancedbtn:has-text('Get A
@@ -5507,9 +5573,21 @@ export async function walkFunnel(
           uiIssues,
         });
         if (plan.isComplete && opts.testFinalActions !== false) {
-          finalActions = (await isWbtSolarProductsPage(page))
-            ? await testSolarJourney(page, opts.screenshotDir, log, siteAlerts, shouldStop)
-            : await testFinalActionButtons(page, opts.screenshotDir, log, twilioNumber, 0, shouldStop);
+          // The results page has to show something before its buttons are tested -
+          // an empty page isn't "no buttons, all fine"
+          const blankResults = RESULTS_PAGE_URL.test(page.url()) && !(await waitForResultsContent(page, log));
+          if (blankResults) {
+            const shot = `${opts.screenshotDir}/results_blank.png`;
+            const saved = await page.screenshot({ path: shot, fullPage: true }).then(() => shot, () => null);
+            const problem =
+              "The results page opened but stayed blank - the products and prices never loaded (waited about 35 seconds and reloaded once). A visitor would see an empty page here.";
+            log(`step ${stepNumber} - RESULTS PAGE BLANK: ${problem}`);
+            finalActions = [{ label: "Results page", selector: "", screenshot: saved, resultingUrl: page.url(), error: problem, warning: null }];
+          } else {
+            finalActions = (await isWbtSolarProductsPage(page))
+              ? await testSolarJourney(page, opts.screenshotDir, log, siteAlerts, shouldStop)
+              : await testFinalActionButtons(page, opts.screenshotDir, log, twilioNumber, 0, shouldStop);
+          }
         } else if (plan.isComplete) {
           log(`step ${stepNumber} - form submitted; finishing here (results-page buttons not tested)`);
         }
