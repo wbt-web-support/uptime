@@ -799,7 +799,7 @@ export default function AdminPanel() {
                         </span>
                       )}
                     </td>
-                    <td className="p-3">
+                    <td className="p-3 whitespace-nowrap">
                       {!domain.ssl ? (
                         <span className="text-muted-foreground">Unknown</span>
                       ) : domain.ssl.days_remaining < 0 ? (
@@ -812,7 +812,7 @@ export default function AdminPanel() {
                         <span className="text-green-600">{domain.ssl.days_remaining} days</span>
                       )}
                     </td>
-                    <td className="p-3">
+                    <td className="p-3 whitespace-nowrap">
                       {!domain.domain_expiry ? (
                         <span className="text-muted-foreground">Unknown</span>
                       ) : domain.domain_expiry.days_remaining < 0 ? (
